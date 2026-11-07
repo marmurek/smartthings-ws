@@ -39,18 +39,44 @@ class ApplianceView(BaseModel):
     door_open: Optional[bool] = None
     power_w: Optional[float] = Field(None, description="Instantaneous power draw, W")
     energy_kwh: Optional[float] = Field(None, description="Lifetime energy consumption, kWh")
+    energy_saved_kwh: Optional[float] = Field(None, description="Lifetime energy saved by energy saving, kWh")
+    sound: Optional[bool] = Field(None, description="Key and end-of-programme sounds")
+    alarms: Optional[list[str]] = Field(
+        None, description="Codes of the alarms that are firing, as the appliance names them"
+    )
+    firmware_update_available: Optional[bool] = None
+    demand_response_level: Optional[int] = Field(None, description="Demand response (DRLC) level set by the cloud")
 
     machine_state: Optional[MachineState] = None
     job: Optional[str] = Field(None, description="The phase of the running programme, as the appliance names it")
     progress: Optional[int] = Field(None, description="Programme progress, %")
-    remaining_minutes: Optional[int] = None
+    remaining_minutes: Optional[int] = Field(
+        None, description="Time left; while a washer is idle, the estimate of the selected programme"
+    )
+    delay_finish_minutes: Optional[int] = Field(
+        None, description="Laundry delay: the programme ends this long after it is started; 0 is no delay"
+    )
 
     course: Optional[str] = Field(None, description="Laundry programme code")
     water_temperature: Optional[str] = None
     spin_level: Optional[str] = None
     rinse_cycles: Optional[int] = None
+    supported_water_temperatures: Optional[list[str]] = None
+    supported_spin_levels: Optional[list[str]] = None
+    supported_rinse_cycles: Optional[list[int]] = None
+    detergent_dose: Optional[int] = Field(None, description="Automatic detergent dosing level")
+    softener_dose: Optional[int] = Field(None, description="Automatic softener dosing level")
+    detergent_low: Optional[bool] = Field(None, description="The automatic detergent tank runs low")
+    softener_low: Optional[bool] = Field(None, description="The automatic softener tank runs low")
+    water_liters: Optional[float] = Field(None, description="Lifetime water consumption, l")
+    drum_clean_due_in: Optional[int] = Field(None, description="Cycles left until the recommended drum clean")
+    drum_clean_last: Optional[str] = Field(None, description="Time of the last drum clean, ISO 8601 without zone")
     dry_level: Optional[str] = None
+    supported_dry_levels: Optional[list[str]] = None
+    dry_time_minutes: Optional[int] = Field(None, description="Drying time of a timed programme; 0 dries to a level")
+    supported_dry_times: Optional[list[int]] = None
     wrinkle_prevent: Optional[bool] = None
+    drum_light: Optional[bool] = None
 
     fridge_temperature: Optional[float] = None
     fridge_target: Optional[float] = None
@@ -60,11 +86,36 @@ class ApplianceView(BaseModel):
     freezer_door_open: Optional[bool] = None
     rapid_cooling: Optional[bool] = None
     rapid_freezing: Optional[bool] = None
+    fridge_range: Optional[list[float]] = Field(None, description="Minimum and maximum of fridge_target, °C")
+    freezer_range: Optional[list[float]] = Field(None, description="Minimum and maximum of freezer_target, °C")
+    vacation_mode: Optional[bool] = None
+    convertible_zone: Optional[str] = Field(None, description="What the convertible compartment is set to")
+    energy_saving_level: Optional[int] = Field(None, description="AI energy saving level")
+    supported_energy_saving_levels: Optional[list[int]] = None
+    door_alarm_volume: Optional[int] = Field(None, description="Volume of the open door alarm")
+    supported_door_alarm_volumes: Optional[list[int]] = None
+    self_check_result: Optional[str] = None
+    self_check_errors: Optional[list[str]] = None
 
     oven_mode: Optional[str] = None
+    supported_modes: Optional[list[str]] = None
+    default_mode: Optional[str] = None
     oven_temperature: Optional[int] = None
     oven_target: Optional[int] = None
+    elapsed_minutes: Optional[int] = Field(None, description="Cooking time so far")
     lamp: Optional[bool] = None
+    fast_preheat: Optional[bool] = None
+    timer_set: Optional[int] = Field(None, description="Kitchen timer setting, in the appliance's own unit")
+    timer_remaining: Optional[int] = Field(None, description="Kitchen timer remaining, in the appliance's own unit")
+    timer_state: Optional[str] = None
+    steam_generator_level: Optional[str] = Field(None, description="Water in the steam generator, e.g. Empty")
+    steam_state: Optional[str] = None
+    water_inlet: Optional[str] = None
+    drain_required: Optional[bool] = Field(None, description="The steam system's water has to be drained")
+    descale_state: Optional[str] = None
+    descale_alarm: Optional[str] = Field(None, description="Descaling reminder, Normal when none is due")
+    descale_new_water_alarm: Optional[bool] = None
+    descale_empty_water_alarm: Optional[bool] = None
 
 
 Operation = Literal["start", "pause", "stop"]
@@ -83,6 +134,18 @@ class ApplianceUpdate(BaseModel):
     freezer_target: Optional[int] = None
     rapid_cooling: Optional[bool] = None
     rapid_freezing: Optional[bool] = None
+    sound: Optional[bool] = None
+    lamp: Optional[bool] = None
+    fast_preheat: Optional[bool] = None
+    water_temperature: Optional[str] = Field(None, description="One of supported_water_temperatures")
+    spin_level: Optional[str] = Field(None, description="One of supported_spin_levels")
+    rinse_cycles: Optional[int] = Field(None, description="One of supported_rinse_cycles")
+    dry_level: Optional[str] = Field(None, description="One of supported_dry_levels")
+    dry_time_minutes: Optional[int] = Field(None, description="One of supported_dry_times")
+    wrinkle_prevent: Optional[bool] = None
+    delay_finish_minutes: Optional[int] = Field(None, ge=0, le=24 * 60, description="Whole minutes; 0 clears the delay")
+    energy_saving_level: Optional[int] = Field(None, description="One of supported_energy_saving_levels")
+    door_alarm_volume: Optional[int] = Field(None, description="One of supported_door_alarm_volumes")
 
 
 class RootResponse(BaseModel):

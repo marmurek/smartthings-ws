@@ -89,17 +89,37 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `remote_control` | laundry, oven | Remote Control enabled on the appliance's panel |
 | `child_lock` | laundry | Child lock engaged |
 | `door_open` | all | Any door open |
-| `power_w`, `energy_kwh` | fridge, laundry | Power draw and lifetime consumption; laundry reports no power draw |
+| `power_w`, `energy_kwh`, `energy_saved_kwh` | fridge, laundry | Power draw, lifetime consumption and energy saved; laundry reports no power draw |
+| `sound` | all | Key and end-of-programme sounds |
+| `alarms` | all | Codes of the alarms that are firing, `[]` when none |
+| `firmware_update_available` | all | A firmware update is waiting |
+| `demand_response_level` | fridge, laundry | Demand response (DRLC) level set by the cloud |
 | `machine_state` | laundry, oven, microwave | `idle`, `running`, `paused` |
 | `job` | laundry | Phase of the programme, e.g. `Wash`, `Spin`, `AIDrying`, `Cooling` |
 | `progress`, `remaining_minutes` | laundry, oven, microwave | Progress in %, time left. While idle a washer reports the selected programme's estimate |
 | `course` | laundry | Programme code, e.g. `1C` |
-| `water_temperature`, `spin_level`, `rinse_cycles` | washer | Programme settings |
-| `dry_level`, `wrinkle_prevent` | dryer | Programme settings |
+| `delay_finish_minutes` | laundry | The programme ends this long after it is started, `0` without a delay |
+| `drum_clean_due_in`, `drum_clean_last` | laundry | Cycles left until the recommended drum clean, time of the last one. On the dryer the counter reads 0 with 180 cycles against an interval of 25, so its meaning there is unconfirmed |
+| `water_temperature`, `spin_level`, `rinse_cycles` | washer | Programme settings, with the values offered in `supported_water_temperatures`, `supported_spin_levels`, `supported_rinse_cycles` |
+| `detergent_dose`, `softener_dose`, `detergent_low`, `softener_low` | washer | Automatic dosing level, and the tank running low |
+| `water_liters` | washer | Lifetime water consumption |
+| `dry_level`, `dry_time_minutes`, `wrinkle_prevent` | dryer | Programme settings, with `supported_dry_levels` and `supported_dry_times` |
+| `drum_light` | dryer | Drum light |
 | `fridge_temperature`, `fridge_target`, `freezer_temperature`, `freezer_target` | fridge | °C |
 | `fridge_door_open`, `freezer_door_open` | fridge | Each door |
 | `rapid_cooling`, `rapid_freezing` | fridge | Rapid modes |
+| `fridge_range`, `freezer_range` | fridge | Minimum and maximum setpoint, °C |
+| `vacation_mode`, `convertible_zone` | fridge | Vacation mode, and what the convertible compartment is set to (`freezer`) |
+| `energy_saving_level` | fridge | AI energy saving level, one of `supported_energy_saving_levels` |
+| `door_alarm_volume` | fridge | Volume of the open door alarm, one of `supported_door_alarm_volumes` |
+| `self_check_result`, `self_check_errors` | fridge | Result of the last self check and its error codes |
 | `oven_mode`, `oven_temperature`, `oven_target`, `lamp` | oven, microwave | Cooking mode while cooking, °C, oven light |
+| `supported_modes`, `default_mode` | oven, microwave | Cooking modes the appliance offers |
+| `elapsed_minutes` | oven, microwave | Cooking time so far |
+| `fast_preheat` | oven, microwave | Fast preheat |
+| `timer_set`, `timer_remaining`, `timer_state` | oven, microwave | Kitchen timer; the unit is unconfirmed, both read 0 while idle |
+| `steam_generator_level`, `steam_state`, `water_inlet`, `drain_required` | oven | Steam system: water in the generator (`Empty`), state, water inlet, draining needed |
+| `descale_state`, `descale_alarm`, `descale_new_water_alarm`, `descale_empty_water_alarm` | oven | Descaling: state, reminder (`Normal` when none is due), and the two water alarms of a descaling run |
 
 ### Commands
 
@@ -111,6 +131,12 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `operation`: `start`, `pause`, `stop` | laundry, oven, microwave | `/operational/state/vs/0` |
 | `fridge_target`, `freezer_target` | fridge | `/temperatures/vs/0`, within the compartment's range |
 | `rapid_cooling`, `rapid_freezing` | fridge | `/refrigeration/vs/0` |
+| `energy_saving_level`, `door_alarm_volume` | fridge | `/energy/ailevel/vs/0`, `/settings/sound/alert/door/vs/0`, one of the supported values |
+| `sound` | all | `/buzzersound/vs/0` on laundry, `/status/lock/vs/0` on the fridge, the `Sound` option of `/mode/vs/0` on the oven and microwave |
+| `lamp`, `fast_preheat` | oven, microwave | The `UpperLamp` and `fastpreheat` options of `/mode/vs/0` |
+| `water_temperature`, `spin_level`, `rinse_cycles` | washer | `/washer/vs/0`, one of the supported values |
+| `dry_level`, `dry_time_minutes`, `wrinkle_prevent` | dryer | `/washer/vs/0`, one of the supported values |
+| `delay_finish_minutes` | laundry | `/operational/state/vs/0`, 0 to 1440 minutes; `0` clears the delay |
 
 ```bash
 curl -X PATCH http://localhost:8124/appliances/fridge -H 'Content-Type: application/json' -d '{"fridge_target": 4}'
@@ -126,6 +152,8 @@ curl -X PATCH http://localhost:8124/appliances/fridge -H 'Content-Type: applicat
 | `503` | The appliance did not answer, or has not been read yet |
 
 **Laundry and ovens refuse most commands while Remote Control is off** (`remote_control: false`), which is the default after every programme. Enable it on the appliance's panel first. Starting an oven programme needs the mode, temperature and time together and is not supported yet; `stop` is.
+
+The writes of the settings follow the formats the Home Assistant `localthings` integration uses for these resources, and have not been tried on these appliances yet.
 
 ## 🔌 WebSocket API
 

@@ -26,6 +26,15 @@ REFRIGERATION = "/refrigeration/vs/0"
 TEMPERATURES = "/temperatures/vs/0"
 OVEN = "/oven/vs/0"
 MODE = "/mode/vs/0"
+ALARMS = "/alarms/vs/0"
+FIRMWARE = "/otninformation/vs/0"
+DEMAND_RESPONSE = "/drlc/vs/0"
+BUZZER = "/buzzersound/vs/0"
+WATER = "/water/consumption/vs/0"
+AI_LEVEL = "/energy/ailevel/vs/0"
+SELF_CHECK = "/selfcheck/vs/0"
+DOOR_ALERT = "/settings/sound/alert/door/vs/0"
+STATUS_LOCK = "/status/lock/vs/0"
 
 # The firmware reports this when it has no power reading.
 NO_POWER_READING = -500
@@ -159,53 +168,253 @@ def _machine_state(resources: Resources) -> Optional[MachineState]:
     return MACHINE_STATES.get(state) if isinstance(state, str) else None
 
 
+def _option_bool(resources: Resources, href: str, prefix: str) -> Optional[bool]:
+    """An `Prefix_On` / `Prefix_Off` entry of an options list"""
+    return on_off(option(resources, href, prefix))
+
+
+def _alarms(resources: Resources) -> Optional[list[str]]:
+    """The codes of the alarms that are firing.
+
+    The list also holds a placeholder per alarm type the board supports,
+    coded `<Name>_OFF` while that alarm is not firing, and rows marked
+    Deleted after an alarm cleared; neither is an alarm.
+    """
+    if ALARMS not in resources:
+        return None
+    items = vendor(resources, ALARMS, "items")
+    if items is None:
+        # Laundry boards leave the resource empty while no alarm fires.
+        return []
+    if not isinstance(items, list):
+        return None
+    return [
+        str(item[DA + "code"])
+        for item in items
+        if isinstance(item, dict)
+        and item.get(DA + "code")
+        and str(item.get(DA + "state", "")).lower() != "deleted"
+        and not str(item[DA + "code"]).lower().endswith("_off")
+    ]
+
+
+def text(value: Any) -> Optional[str]:
+    """A value the API reports as a string, None if the appliance sent anything else"""
+    return value if isinstance(value, str) else None
+
+
+def _string_list(value: Any) -> Optional[list[str]]:
+    """A list the appliance sent, as strings"""
+    return [str(v) for v in value] if isinstance(value, list) else None
+
+
+def _choices(value: Any) -> Optional[list[str]]:
+    """The values a setting offers, without the `None` placeholder the laundry lists start with"""
+    values = _string_list(value)
+    return None if values is None else [v for v in values if v != "None"]
+
+
+def _int_list(value: Any) -> Optional[list[int]]:
+    """A list of numbers the appliance sent as strings, skipping the ones that are not"""
+    if not isinstance(value, list):
+        return None
+    return [n for n in (as_int(v) for v in value) if n is not None]
+
+
+def _modes(resources: Resources) -> list[str]:
+    """The active entries of the vendor mode resource"""
+    modes = vendor(resources, MODE, "modes")
+    return [m for m in modes if isinstance(m, str)] if isinstance(modes, list) else []
+
+
+def _mode_token(resources: Resources, prefix: str) -> Optional[str]:
+    """The value of the active `PREFIX_VALUE` mode"""
+    return next((m[len(prefix) :] for m in _modes(resources) if m.startswith(prefix)), None)
+
+
+def _drum_clean_due_in(resources: Resources) -> Optional[int]:
+    """Cycles left until the drum clean the appliance recommends.
+
+    `DrumCleanProposal_N` is the interval in cycles and `WashingTimes_N` the
+    cycles since the last clean.
+    """
+    interval = as_int(option(resources, COURSE, "DrumCleanProposal_"))
+    done = as_int(option(resources, COURSE, "WashingTimes_"))
+    return None if interval is None or done is None else max(interval - done, 0)
+
+
+def _drum_clean_last(resources: Resources) -> Optional[str]:
+    """The time of the last drum clean; a dryer keeps the whole history joined with `|`"""
+    log = option(resources, COURSE, "DrumCleanLog_")
+    return log.rsplit("|", 1)[-1] if log else None
+
+
+def _water_liters(resources: Resources) -> Optional[float]:
+    """The lifetime water counter, which the appliance keeps in millilitres"""
+    value = as_float(vendor(resources, WATER, "cumulativeWater"))
+    return None if value is None else round(value / 1000, 1)
+
+
+def _energy_saved_kwh(resources: Resources) -> Optional[float]:
+    """The lifetime energy saved by the energy saving features, in kWh"""
+    value = as_float(vendor(resources, ENERGY, "cumulativeSavedPower"))
+    return None if value is None else round(value / 1000, 2)
+
+
+def _sound(resources: Resources, kind: Kind) -> Optional[bool]:
+    """Whether the appliance beeps; each family keeps it elsewhere"""
+    if kind in (Kind.WASHER, Kind.DRYER):
+        return on_off(resources.get(BUZZER, {}).get("setBuzzerSound"))
+    if kind is Kind.FRIDGE:
+        return on_off(vendor(resources, STATUS_LOCK, "device.sound"))
+    return _option_bool(resources, MODE, "Sound_")
+
+
+def _common(resources: Resources, kind: Kind) -> dict[str, Any]:
+    """The fields every kind of appliance may have"""
+    return {
+        "power": _power(resources),
+        "remote_control": on_off(vendor(resources, REMOTE_CONTROL, "remoteControlEnabled")),
+        "child_lock": on_off(resources.get(KIDS_LOCK, {}).get("value")),
+        "door_open": _door_open(resources),
+        "power_w": _power_w(resources),
+        "energy_kwh": _energy_kwh(resources),
+        "energy_saved_kwh": _energy_saved_kwh(resources),
+        "sound": _sound(resources, kind),
+        "alarms": _alarms(resources),
+        "firmware_update_available": on_off(vendor(resources, FIRMWARE, "newVersionAvailable")),
+        "demand_response_level": as_int(vendor(resources, DEMAND_RESPONSE, "drlcLevel")),
+        "machine_state": _machine_state(resources),
+        "job": _job(resources),
+        "progress": as_int(vendor(resources, OPERATIONAL_STATE, "progressPercentage")),
+        "remaining_minutes": minutes(vendor(resources, OPERATIONAL_STATE, "remainingTime")),
+    }
+
+
+def _laundry(resources: Resources) -> dict[str, Any]:
+    """The fields washers and dryers share"""
+    return {
+        "course": option(resources, COURSE, "Course_"),
+        "delay_finish_minutes": minutes(vendor(resources, OPERATIONAL_STATE, "delayEndTime")),
+        "drum_clean_due_in": _drum_clean_due_in(resources),
+        "drum_clean_last": _drum_clean_last(resources),
+    }
+
+
+def _washer(resources: Resources) -> dict[str, Any]:
+    """A washer's programme settings, detergent dosing and water use"""
+    return {
+        "water_temperature": text(vendor(resources, WASHER, "waterTemperature")),
+        "spin_level": text(vendor(resources, WASHER, "spinLevel")),
+        "rinse_cycles": as_int(vendor(resources, WASHER, "rinseCycles")),
+        "supported_water_temperatures": _choices(vendor(resources, WASHER, "supportedWaterTemperature")),
+        "supported_spin_levels": _choices(vendor(resources, WASHER, "supportedSpinLevel")),
+        "supported_rinse_cycles": _int_list(vendor(resources, WASHER, "supportedRinseCycles")),
+        "detergent_dose": as_int(option(resources, COURSE, "DetergentLevelCtrl_")),
+        "softener_dose": as_int(option(resources, COURSE, "SoftenerLevelCtrl_")),
+        "detergent_low": _dosing_low(option(resources, COURSE, "DetergentAlarm_")),
+        "softener_low": _dosing_low(option(resources, COURSE, "SoftenerAlarm_")),
+        "water_liters": _water_liters(resources),
+    }
+
+
+def _dosing_low(value: Optional[str]) -> Optional[bool]:
+    """A detergent or softener alarm, which is `Off` unless the tank runs low"""
+    return None if value is None else value != "Off"
+
+
+def _dryer(resources: Resources) -> dict[str, Any]:
+    """A dryer's programme settings"""
+    supported_times = vendor(resources, WASHER, "supportedDryTime")
+    return {
+        "dry_level": text(vendor(resources, WASHER, "dryLevel")),
+        "supported_dry_levels": _choices(vendor(resources, WASHER, "supportedDryLevel")),
+        "dry_time_minutes": minutes(vendor(resources, WASHER, "dryTime")),
+        "supported_dry_times": (
+            [m for m in (minutes(t) for t in supported_times) if m is not None]
+            if isinstance(supported_times, list)
+            else None
+        ),
+        "wrinkle_prevent": on_off(vendor(resources, WASHER, "wrinklePrevent")),
+        "drum_light": _option_bool(resources, COURSE, "DrumLight_"),
+    }
+
+
+def _fridge(resources: Resources) -> dict[str, Any]:
+    """A fridge's compartments, modes and diagnostics"""
+    fridge = temperature_item(resources, "Fridge")
+    freezer = temperature_item(resources, "Freezer")
+    vacation = _mode_token(resources, "RVACATION_")
+    errors = _string_list(vendor(resources, SELF_CHECK, "error"))
+    door_alert = resources.get(DOOR_ALERT, {})
+    return {
+        "fridge_temperature": _item_value(fridge, "current"),
+        "fridge_target": _item_value(fridge, "desired"),
+        "fridge_range": _item_range(fridge),
+        "freezer_temperature": _item_value(freezer, "current"),
+        "freezer_target": _item_value(freezer, "desired"),
+        "freezer_range": _item_range(freezer),
+        "fridge_door_open": _door_open(resources, "/door/cooler/0"),
+        "freezer_door_open": _door_open(resources, "/door/freezer/0"),
+        "rapid_cooling": on_off(vendor(resources, REFRIGERATION, "rapidFridge")),
+        "rapid_freezing": on_off(vendor(resources, REFRIGERATION, "rapidFreezing")),
+        "vacation_mode": None if vacation is None else vacation == "ON",
+        "convertible_zone": (_mode_token(resources, "FCONVERT_") or "").lower() or None,
+        "energy_saving_level": as_int(resources.get(AI_LEVEL, {}).get("aiLevel")),
+        "supported_energy_saving_levels": _int_list(resources.get(AI_LEVEL, {}).get("supportedAiLevel")),
+        "door_alarm_volume": as_int(door_alert.get("alert.door")),
+        "supported_door_alarm_volumes": _int_list(door_alert.get("supportedAlert.door")),
+        "self_check_result": text(vendor(resources, SELF_CHECK, "result")),
+        "self_check_errors": None if errors is None else [e for e in errors if e != "ErrorCode_None"],
+    }
+
+
+def _item_range(item: Optional[dict[str, Any]]) -> Optional[list[float]]:
+    """The minimum and maximum of a compartment's setpoint"""
+    low, high = _item_value(item, "minimum"), _item_value(item, "maximum")
+    return None if low is None or high is None else [low, high]
+
+
+def _cooking(resources: Resources) -> dict[str, Any]:
+    """An oven's or microwave's cooking state, timer and steam system"""
+    oven = temperature_item(resources, "Temperature")
+    supported = _string_list(vendor(resources, MODE, "supportedModes"))
+    drain = option(resources, MODE, "drainRequired_")
+    return {
+        "oven_mode": _oven_mode(resources),
+        "supported_modes": None if supported is None else [m for m in supported if m != "NoOperation"],
+        "default_mode": text(vendor(resources, MODE, "defaultMode")),
+        "oven_temperature": as_int(oven.get(DA + "current")) if oven else None,
+        "oven_target": as_int(oven.get(DA + "desired")) if oven else None,
+        "elapsed_minutes": minutes(vendor(resources, OPERATIONAL_STATE, "operationTime")),
+        "lamp": _option_bool(resources, MODE, "UpperLamp_"),
+        "fast_preheat": _option_bool(resources, MODE, "fastpreheat_"),
+        "timer_set": as_int(option(resources, MODE, "UpperTimerSet_")),
+        "timer_remaining": as_int(option(resources, MODE, "UpperTimerCurrent_")),
+        "timer_state": option(resources, MODE, "UpperTimerState_"),
+        "steam_generator_level": option(resources, MODE, "steamGeneratorLevel_"),
+        "steam_state": option(resources, MODE, "steamState_"),
+        "water_inlet": option(resources, MODE, "waterInlet_"),
+        "drain_required": None if drain is None else drain.strip("0") != "",
+        "descale_state": option(resources, MODE, "descaleState_"),
+        "descale_alarm": option(resources, MODE, "descaleAlarm_"),
+        "descale_new_water_alarm": _option_bool(resources, MODE, "descaleNewWaterAlarm_"),
+        "descale_empty_water_alarm": _option_bool(resources, MODE, "descaleEmptyWaterAlarm_"),
+    }
+
+
 def read_view(name: str, host: str, resources: Resources) -> ApplianceView:
     """Express an appliance's resources as the API reports them"""
     kind = detect_kind(resources)
-    view = ApplianceView(
-        name=name,
-        host=host,
-        kind=kind,
-        available=True,
-        power=_power(resources),
-        remote_control=on_off(vendor(resources, REMOTE_CONTROL, "remoteControlEnabled")),
-        child_lock=on_off(resources.get(KIDS_LOCK, {}).get("value")),
-        door_open=_door_open(resources),
-        power_w=_power_w(resources),
-        energy_kwh=_energy_kwh(resources),
-        machine_state=_machine_state(resources),
-        job=_job(resources),
-        progress=as_int(vendor(resources, OPERATIONAL_STATE, "progressPercentage")),
-        remaining_minutes=minutes(vendor(resources, OPERATIONAL_STATE, "remainingTime")),
-    )
-
+    fields = _common(resources, kind)
     if kind in (Kind.WASHER, Kind.DRYER):
-        view.course = option(resources, COURSE, "Course_")
+        fields |= _laundry(resources)
     if kind is Kind.WASHER:
-        view.water_temperature = vendor(resources, WASHER, "waterTemperature")
-        view.spin_level = vendor(resources, WASHER, "spinLevel")
-        view.rinse_cycles = as_int(vendor(resources, WASHER, "rinseCycles"))
+        fields |= _washer(resources)
     if kind is Kind.DRYER:
-        view.dry_level = vendor(resources, WASHER, "dryLevel")
-        view.wrinkle_prevent = on_off(vendor(resources, WASHER, "wrinklePrevent"))
-
+        fields |= _dryer(resources)
     if kind is Kind.FRIDGE:
-        fridge = temperature_item(resources, "Fridge")
-        freezer = temperature_item(resources, "Freezer")
-        view.fridge_temperature = _item_value(fridge, "current")
-        view.fridge_target = _item_value(fridge, "desired")
-        view.freezer_temperature = _item_value(freezer, "current")
-        view.freezer_target = _item_value(freezer, "desired")
-        view.fridge_door_open = _door_open(resources, "/door/cooler/0")
-        view.freezer_door_open = _door_open(resources, "/door/freezer/0")
-        view.rapid_cooling = on_off(vendor(resources, REFRIGERATION, "rapidFridge"))
-        view.rapid_freezing = on_off(vendor(resources, REFRIGERATION, "rapidFreezing"))
-
+        fields |= _fridge(resources)
     if kind in (Kind.OVEN, Kind.MICROWAVE):
-        oven = temperature_item(resources, "Temperature")
-        view.oven_mode = _oven_mode(resources)
-        view.oven_temperature = as_int(oven.get(DA + "current")) if oven else None
-        view.oven_target = as_int(oven.get(DA + "desired")) if oven else None
-        view.lamp = on_off(option(resources, MODE, "UpperLamp_"))
-
-    return view
+        fields |= _cooking(resources)
+    return ApplianceView(name=name, host=host, kind=kind, available=True, **fields)

@@ -154,3 +154,146 @@ def test_read_view_fridge_without_compartments() -> None:
 def test_minutes(value: Any, expected: Any) -> None:
     """Test that HH:MM:SS durations read as whole minutes"""
     assert minutes(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        (
+            "washer",
+            {
+                "sound": True,
+                "alarms": [],
+                "firmware_update_available": False,
+                "demand_response_level": 2,
+                "energy_saved_kwh": 62.69,
+                "delay_finish_minutes": 0,
+                "drum_clean_due_in": 28,
+                "drum_clean_last": "2026-11-03T15:34:56",
+                "detergent_dose": 2,
+                "softener_dose": 2,
+                "detergent_low": False,
+                "softener_low": False,
+                "water_liters": 19311.7,
+                "supported_water_temperatures": ["Cold", "20", "30", "40", "60", "90"],
+                "supported_spin_levels": ["RinseHold", "NoSpin", "400", "800", "1000", "1200", "1400"],
+                "supported_rinse_cycles": [0, 1, 2, 3, 4, 5],
+            },
+        ),
+        (
+            "dryer",
+            {
+                "drum_clean_due_in": 0,
+                "drum_clean_last": "2026-10-05T22:09:39",
+                "supported_dry_times": [0, 30, 60, 240],
+                "supported_dry_levels": ["Damp", "Less", "Normal", "More"],
+                "drum_light": False,
+                "water_liters": None,
+            },
+        ),
+        (
+            "fridge",
+            {
+                "sound": True,
+                "energy_saved_kwh": 49.12,
+                "vacation_mode": False,
+                "convertible_zone": "freezer",
+                "energy_saving_level": 1,
+                "supported_energy_saving_levels": [1, 2],
+                "door_alarm_volume": 1,
+                "supported_door_alarm_volumes": [1, 2, 3, 4],
+                "self_check_result": "Success",
+                "self_check_errors": [],
+            },
+        ),
+        (
+            "oven",
+            {
+                "sound": True,
+                "alarms": [],
+                "default_mode": "UpperConvection",
+                "fast_preheat": False,
+                "timer_set": 0,
+                "timer_remaining": 0,
+                "timer_state": "Ready",
+                "steam_generator_level": "Empty",
+                "steam_state": "Standby",
+                "water_inlet": "Closed",
+                "drain_required": False,
+                "descale_state": "Standby",
+                "descale_alarm": "Normal",
+                "descale_new_water_alarm": False,
+                "descale_empty_water_alarm": False,
+            },
+        ),
+        (
+            "microwave",
+            {"sound": False, "supported_modes": ["Autocook", "KeepWarm", "MicroWave", "Deodorization", "SteamClean"]},
+        ),
+    ],
+)
+def test_read_view_details(kind: str, expected: dict[str, Any]) -> None:
+    """Test that diagnostics, maintenance and settings are read for each appliance"""
+    view = read_view(kind, "10.0.0.1", resources(kind))
+
+    assert {name: getattr(view, name) for name in expected} == expected
+
+
+@pytest.mark.parametrize(
+    ("items", "expected"),
+    [
+        ([{DA + "code": "OV_E_OFF"}, {DA + "code": "FilterAlarm"}], ["FilterAlarm"]),
+        ([{DA + "code": "DoorA_Opened", DA + "state": "Deleted"}, {DA + "id": "1"}, "x"], []),
+        (None, []),
+        ("broken", None),
+    ],
+)
+def test_alarms(items: Any, expected: Any) -> None:
+    """Test that only firing alarms are reported, without placeholders and cleared rows"""
+    view = read_view("oven", "10.0.0.1", resources("oven", alarms_vs_0={DA + "items": items}))
+
+    assert view.alarms == expected
+
+
+@pytest.mark.parametrize(
+    ("changes", "field", "expected"),
+    [
+        ({"course_vs_0": {DA + "options": ["DetergentAlarm_Notice_0"]}}, "detergent_low", True),
+        ({"course_vs_0": {DA + "options": ["WashingTimes_x", "DrumCleanProposal_40"]}}, "drum_clean_due_in", None),
+        ({"washer_vs_0": {DA + "waterTemperature": 40}}, "water_temperature", None),
+        ({"washer_vs_0": {DA + "supportedRinseCycles": "2"}}, "supported_rinse_cycles", None),
+        ({"operational_state_vs_0": {DA + "delayEndTime": "05:00:00"}}, "delay_finish_minutes", 300),
+    ],
+)
+def test_read_view_washer_variants(changes: dict[str, Any], field: str, expected: Any) -> None:
+    """Test that unusual laundry values read as expected"""
+    view = read_view("washer", "10.0.0.1", resources("washer", **changes))
+
+    assert getattr(view, field) == expected
+
+
+@pytest.mark.parametrize(
+    ("changes", "field", "expected"),
+    [
+        ({"mode_vs_0": {DA + "modes": ["RVACATION_ON"]}}, "vacation_mode", True),
+        ({"mode_vs_0": {DA + "modes": "broken"}}, "convertible_zone", None),
+        (
+            {"selfcheck_vs_0": {DA + "error": ["ErrorCode_None", "ErrorCode_22E"]}},
+            "self_check_errors",
+            ["ErrorCode_22E"],
+        ),
+    ],
+)
+def test_read_view_fridge_variants(changes: dict[str, Any], field: str, expected: Any) -> None:
+    """Test that unusual fridge values read as expected"""
+    view = read_view("fridge", "10.0.0.1", resources("fridge", **changes))
+
+    assert getattr(view, field) == expected
+
+
+@pytest.mark.parametrize(("drain", "expected"), [("00", False), ("01", True)])
+def test_drain_required(drain: str, expected: bool) -> None:
+    """Test that any non-zero drain code means draining is required"""
+    view = read_view("oven", "10.0.0.1", resources("oven", mode_vs_0={DA + "options": [f"drainRequired_{drain}"]}))
+
+    assert view.drain_required is expected

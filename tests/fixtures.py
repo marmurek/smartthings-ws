@@ -14,6 +14,7 @@ DA = "x.com.samsung.da."
 _COMMON: Resources = {
     "/timezone/vs/0": {"timezoneid": "Europe/Warsaw", "offset": "+01:00", "DST": "OFF"},
     "/configuration/vs/0": {DA + "countryCode": "PL"},
+    "/otninformation/vs/0": {DA + "newVersionAvailable": "false", "otnStatus": "None"},
 }
 
 _FRIDGE: Resources = {
@@ -29,10 +30,22 @@ _FRIDGE: Resources = {
     "/energy/consumption/vs/0": {
         DA + "instantaneousPower": "3",
         DA + "cumulativePower": "424870",
+        DA + "cumulativeSavedPower": "49123",
         DA + "cumulativeUnit": "Wh",
         DA + "instantaneousPowerUnit": "W",
     },
     "/refrigeration/vs/0": {DA + "rapidFridge": "Off", DA + "rapidFreezing": "Off"},
+    "/drlc/vs/0": {DA + "drlcLevel": "2", DA + "durationminutes": "1441"},
+    "/energy/ailevel/vs/0": {"aiLevel": "1", "supportedAiLevel": ["1", "2"]},
+    "/settings/sound/alert/door/vs/0": {"alert.door": "1", "supportedAlert.door": ["1", "2", "3", "4"]},
+    "/status/lock/vs/0": {DA + "device.sound": "On"},
+    "/mode/vs/0": {DA + "modes": ["RVACATION_OFF", "FCONVERT_FREEZER"], DA + "supportedModes": ["HOMECARE_WIZARD_V2"]},
+    "/selfcheck/vs/0": {
+        DA + "supportedActions": ["Start"],
+        DA + "status": "Ready",
+        DA + "result": "Success",
+        DA + "error": ["ErrorCode_None"],
+    },
     "/temperature/desired/cooler/0": {"temperature": 3.0, "range": [1.0, 7.0], "units": "C"},
     "/temperatures/vs/0": {
         DA
@@ -65,7 +78,11 @@ _LAUNDRY: Resources = {
         DA + "instantaneousPowerUnit": "W",
         DA + "cumulativePower": "304200",
         DA + "cumulativeUnit": "Wh",
+        DA + "cumulativeSavedPower": "62694",
     },
+    "/buzzersound/vs/0": {"supportedBuzzerSound": ["Off", "On"], "setBuzzerSound": "On"},
+    "/drlc/vs/0": {DA + "drlcLevel": "2", DA + "durationminutes": "724"},
+    "/alarms/vs/0": {},
     "/power/vs/0": {DA + "power": "Off"},
     "/power/0": {"value": False},
     "/kidslock/vs/0": {DA + "kidsLock": "Ready"},
@@ -75,12 +92,29 @@ _LAUNDRY: Resources = {
 }
 
 _WASHER: Resources = {
-    "/course/vs/0": {DA + "options": ["DeviceType_0167", "Course_1C", "AiOption_On"]},
+    "/course/vs/0": {
+        DA
+        + "options": [
+            "DeviceType_0167",
+            "Course_1C",
+            "AiOption_On",
+            "WashingTimes_12",
+            "DrumCleanProposal_40",
+            "DrumCleanLog_2026-11-03T15:34:56",
+            "DetergentAlarm_Off",
+            "SoftenerAlarm_Off",
+            "DetergentLevelCtrl_2",
+            "SoftenerLevelCtrl_2",
+            "SupportedDetergentLevelCtrl_00010203",
+        ]
+    },
+    "/water/consumption/vs/0": {DA + "cumulativeWater": "19311700"},
     "/operational/state/vs/0": {
         DA + "state": "Ready",
         DA + "remainingTime": "02:49:00",
         DA + "progressPercentage": "1",
         DA + "progress": "None",
+        DA + "delayEndTime": "00:00:00",
         DA + "supportedProgress": ["None", "Weightsensing", "Wash", "Rinse", "Spin", "Finish"],
     },
     "/washer/vs/0": {
@@ -88,12 +122,24 @@ _WASHER: Resources = {
         DA + "waterTemperature": "40",
         DA + "supportedWaterTemperature": ["None", "Cold", "20", "30", "40", "60", "90"],
         DA + "spinLevel": "1400",
+        DA + "supportedSpinLevel": ["RinseHold", "NoSpin", "400", "800", "1000", "1200", "1400"],
         DA + "rinseCycles": "2",
+        DA + "supportedRinseCycles": ["0", "1", "2", "3", "4", "5"],
     },
 }
 
 _DRYER: Resources = {
-    "/course/vs/0": {DA + "options": ["DeviceType_0165", "Course_29", "AiOption_On"]},
+    "/course/vs/0": {
+        DA
+        + "options": [
+            "DeviceType_0165",
+            "Course_29",
+            "WashingTimes_180",
+            "DrumCleanProposal_25",
+            "DrumCleanLog_2025-11-15T15:23:20|2026-10-05T22:09:39",
+            "DrumLight_Off",
+        ]
+    },
     "/power/vs/0": {DA + "power": "On"},
     "/power/0": {"value": True},
     "/operational/state/vs/0": {
@@ -101,6 +147,7 @@ _DRYER: Resources = {
         DA + "remainingTime": "00:28:00",
         DA + "progressPercentage": "57",
         DA + "progress": "AIDrying",
+        DA + "delayEndTime": "00:00:00",
         DA + "supportedProgress": ["None", "AIDrying", "Cooling", "Finish"],
     },
     "/washer/vs/0": {
@@ -108,6 +155,7 @@ _DRYER: Resources = {
         DA + "dryLevel": "Normal",
         DA + "supportedDryLevel": ["None", "Damp", "Less", "Normal", "More"],
         DA + "dryTime": "00:00:00",
+        DA + "supportedDryTime": ["00:00:00", "00:30:00", "01:00:00", "04:00:00"],
         DA + "dryerType": "Electricity",
     },
 }
@@ -122,6 +170,18 @@ _COOKING: Resources = {
         DA + "progressPercentage": "0",
     },
     "/oven/vs/0": {DA + "state": "Ready", DA + "recipe": "00000000000000"},
+    "/alarms/vs/0": {
+        DA
+        + "items": [
+            {
+                DA + "id": "0",
+                DA + "description": "Alarm",
+                DA + "alarmType": "Device",
+                DA + "code": "OV_E_OFF",
+                DA + "triggeredTime": "2026-11-07T21:30:00",
+            }
+        ]
+    },
     "/kidslock/vs/0": {DA + "kidsLock": "Ready"},
     "/power/vs/0": {DA + "power": "Off"},
 }
@@ -130,7 +190,25 @@ _OVEN: Resources = {
     "/mode/vs/0": {
         DA + "supportedModes": ["UpperAirFry", "UpperConvection", "UpperTopConvection", "UpperLargeGrill"],
         DA + "modes": ["NoOperation"],
-        DA + "options": ["DeviceType_NV7000BS/EU9", "fastpreheat_Off", "UpperLamp_Off", "steamGeneratorLevel_Empty"],
+        DA
+        + "options": [
+            "DeviceType_NV7000BS/EU9",
+            "fastpreheat_Off",
+            "UpperTimerCurrent_0",
+            "UpperTimerSet_0",
+            "UpperTimerState_Ready",
+            "UpperLamp_Off",
+            "waterInlet_Closed",
+            "descaleAlarm_Normal",
+            "descaleNewWaterAlarm_Off",
+            "descaleEmptyWaterAlarm_Off",
+            "steamGeneratorLevel_Empty",
+            "drainRequired_00",
+            "steamState_Standby",
+            "descaleState_Standby",
+            "Sound_On",
+        ],
+        DA + "defaultMode": "UpperConvection",
     },
     "/temperatures/vs/0": {
         DA

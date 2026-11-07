@@ -183,16 +183,16 @@ The answer is `{"type": "applied", ...}`, `{"type": "not_changed", ...}` or `{"t
 
 [`sinum/`](sinum) turns each appliance into a custom device on a Sinum central unit that runs smartthings-ws itself:
 
-- [`appliance.lua`](sinum/appliance.lua) is the script of every device. It receives the state over the WebSocket (`ws://127.0.0.1:8124/ws`), sends commands over it, and reads the state over HTTP once after each rebuild of the interpreter. A command the appliance refuses shows a toast and puts the control back.
-- [`deploy.py`](sinum/deploy.py) builds the elements, the tile and the details dialog for each kind of appliance and creates the devices through the hub's REST API, or updates the ones it created before (recognised by their integration UID `smartthings-ws:<name>`):
+- [`appliance.lua`](sinum/appliance.lua) is the script of every device. It receives the state over the WebSocket (`ws://127.0.0.1:8124/ws`), sends commands over it, and reads the state over HTTP once after each rebuild of the interpreter. A command the appliance refuses shows a toast and puts the control back. Alarms, a waiting firmware update, low detergent, a due drum clean, descaling and the self check errors appear as warnings of the device. Programme settings can be changed only while no programme runs.
+- [`deploy.py`](sinum/deploy.py) builds the elements, the tile and the details dialog for each kind of appliance and creates the devices through the hub's REST API, or updates the ones it created before (recognised by their integration UID `smartthings-ws:<name>`). It reads the appliances from smartthings-ws first: the setting lists offer the values each appliance reports, and an appliance that has not been read is skipped. Run it again when an appliance starts offering other values:
 
 ```bash
-SINUM_TOKEN=<API token> .venv/bin/python -m sinum.deploy --hub http://192.168.50.2:8008
+SINUM_TOKEN=<API token> .venv/bin/python -m sinum.deploy --hub http://192.168.50.2:8008 --service http://192.168.50.2:8124
 ```
 
 `--only fridge washer` limits it to some appliances, `--dry-run` reports what it would do. The API does not set the room of a device; assign it in the Sinum app.
 
-Scenes and automations control the devices with commands: `virtual[ID]:call("start")`, `"pause"`, `"stop"`, `"power_on"`, `"power_off"`, `"set_fridge_target"` and `"set_freezer_target"` with a number, `"set_rapid_cooling"` and `"set_rapid_freezing"` with a boolean.
+Scenes and automations control the devices with commands: `virtual[ID]:call("start")`, `"pause"`, `"stop"`, `"power_on"`, `"power_off"`, `"set_fridge_target"` and `"set_freezer_target"` with a number, `"set_rapid_cooling"`, `"set_rapid_freezing"`, `"set_sound"` and `"set_lamp"` with a boolean, `"set_delay"` with minutes.
 
 The Lua interpreter of the hub has no `select`; [`.stylua.toml`](.stylua.toml) formats the script (`stylua sinum/appliance.lua`), and `luac5.4 -p sinum/appliance.lua` checks its syntax.
 

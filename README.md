@@ -151,6 +151,23 @@ Commands take the same fields as `PATCH`; `message_id` is optional and echoed ba
 
 The answer is `{"type": "applied", ...}`, `{"type": "not_changed", ...}` or `{"type": "error", "message": "..."}`, each carrying the `name` and `message_id`. An error leaves the connection open.
 
+## 🏠 Sinum custom devices
+
+[`sinum/`](sinum) turns each appliance into a custom device on a Sinum central unit that runs smartthings-ws itself:
+
+- [`appliance.lua`](sinum/appliance.lua) is the script of every device. It receives the state over the WebSocket (`ws://127.0.0.1:8124/ws`), sends commands over it, and reads the state over HTTP once after each rebuild of the interpreter. A command the appliance refuses shows a toast and puts the control back.
+- [`deploy.py`](sinum/deploy.py) builds the elements, the tile and the details dialog for each kind of appliance and creates the devices through the hub's REST API, or updates the ones it created before (recognised by their integration UID `smartthings-ws:<name>`):
+
+```bash
+SINUM_TOKEN=<API token> .venv/bin/python -m sinum.deploy --hub http://192.168.50.2:8008
+```
+
+`--only fridge washer` limits it to some appliances, `--dry-run` reports what it would do. The API does not set the room of a device; assign it in the Sinum app.
+
+Scenes and automations control the devices with commands: `virtual[ID]:call("start")`, `"pause"`, `"stop"`, `"power_on"`, `"power_off"`, `"set_fridge_target"` and `"set_freezer_target"` with a number, `"set_rapid_cooling"` and `"set_rapid_freezing"` with a boolean.
+
+The Lua interpreter of the hub has no `select`; [`.stylua.toml`](.stylua.toml) formats the script (`stylua sinum/appliance.lua`), and `luac5.4 -p sinum/appliance.lua` checks its syntax.
+
 ## 🛠️ Build and run in Docker
 
 ```bash
@@ -176,7 +193,7 @@ docker run -d --name smartthings-ws --network host -v ./my-config.yaml:/app/conf
 ```
 
 ```bash
-.venv/bin/black --check . && .venv/bin/mypy && .venv/bin/pylint main.py smartthings_ws tests && .venv/bin/pytest
+.venv/bin/black --check . && .venv/bin/mypy && .venv/bin/pylint main.py smartthings_ws sinum tests && .venv/bin/pytest
 ```
 
 ```bash

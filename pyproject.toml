@@ -7,7 +7,7 @@
 #
 #   black .                              format the code
 #   mypy                                 check types
-#   pylint main.py smartthings_ws tests  check style and common mistakes
+#   pylint main.py smartthings_ws sinum tests  check style and common mistakes
 #   pytest                               run the test suite with coverage
 
 [tool.black]
@@ -29,7 +29,7 @@ branch = true
 
 [tool.mypy]
 python_version = "3.13"
-files = ["main.py", "smartthings_ws", "tests"]
+files = ["main.py", "smartthings_ws", "sinum", "tests"]
 strict = true
 plugins = ["pydantic.mypy"]
 # smartthings-local ships no py.typed marker; following its source is what

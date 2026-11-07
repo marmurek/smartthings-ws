@@ -1,0 +1,51 @@
+# SmartThings Local API configuration.
+#
+# Every setting lives here. Each one can also be overridden by an environment
+# variable, which is what the Docker image uses - see the README for the list.
+# Point the application at a different file with:  python3 main.py --config other.yaml
+
+server:
+  # Interface the API listens on. 0.0.0.0 means every interface.
+  host: "0.0.0.0"
+  # Port the HTTP and WebSocket API listens on. Differs from gree-ws, so both
+  # can run on one host with host networking.
+  port: 8124
+  # Reload the application when the sources change. For development only.
+  dev_mode: false
+
+polling:
+  # How often to read each appliance, in seconds. One read fetches every
+  # resource of the appliance, up to about 26 KB for an oven.
+  interval: 10
+  # How long to wait for an appliance to answer, in seconds. Covers the DTLS
+  # handshake and a whole multi-block read.
+  response_timeout: 30
+
+logging:
+  # Log the library's exchanges with the appliances. Very noisy.
+  verbose: false
+
+auth:
+  # When disabled, every endpoint is open to anyone who can reach the port.
+  enabled: false
+  # The shared token clients must present. Required when auth is enabled.
+  #
+  #   REST:      Authorization: Bearer <token>   (or  X-API-Key: <token>)
+  #   WebSocket: ws://host:8124/ws?token=<token>
+  token: ""
+
+# The appliances, by a URL-safe name. The port defaults to 49154, the OCF secure
+# port these appliances advertise.
+#
+# Environment override:  APPLIANCES="fridge=192.168.50.21,oven=192.168.50.23:49154"
+appliances:
+  - name: microwave
+    host: 192.168.50.20
+  - name: fridge
+    host: 192.168.50.21
+  - name: washer
+    host: 192.168.50.22
+  - name: oven
+    host: 192.168.50.23
+  - name: dryer
+    host: 192.168.50.24

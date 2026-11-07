@@ -1,0 +1,185 @@
+"""Resources of the appliances this service supports, trimmed to what it reads.
+
+Taken from real reads of a TP1X_REF_21K fridge, a WD7000B washer, a DV9400B
+dryer, an NV7000BS oven and an NQ7000B microwave, with identifiers removed.
+"""
+
+import copy
+from typing import Any
+
+from smartthings_ws.connection import Resources
+
+DA = "x.com.samsung.da."
+
+_COMMON: Resources = {
+    "/timezone/vs/0": {"timezoneid": "Europe/Warsaw", "offset": "+01:00", "DST": "OFF"},
+    "/configuration/vs/0": {DA + "countryCode": "PL"},
+}
+
+_FRIDGE: Resources = {
+    "/door/freezer/0": {"openState": "Close"},
+    "/door/cooler/0": {"openState": "Close"},
+    "/doors/vs/0": {
+        DA
+        + "items": [
+            {DA + "openState": "Close", DA + "id": "0", DA + "description": "Door"},
+            {DA + "openState": "Close", DA + "id": "1", DA + "description": "Door"},
+        ]
+    },
+    "/energy/consumption/vs/0": {
+        DA + "instantaneousPower": "3",
+        DA + "cumulativePower": "424870",
+        DA + "cumulativeUnit": "Wh",
+        DA + "instantaneousPowerUnit": "W",
+    },
+    "/refrigeration/vs/0": {DA + "rapidFridge": "Off", DA + "rapidFreezing": "Off"},
+    "/temperature/desired/cooler/0": {"temperature": 3.0, "range": [1.0, 7.0], "units": "C"},
+    "/temperatures/vs/0": {
+        DA
+        + "items": [
+            {
+                DA + "id": "0",
+                DA + "description": "Freezer",
+                DA + "desired": "-18",
+                DA + "current": "-18",
+                DA + "maximum": "-15",
+                DA + "minimum": "-23",
+                DA + "unit": "Celsius",
+            },
+            {
+                DA + "id": "1",
+                DA + "description": "Fridge",
+                DA + "desired": "3",
+                DA + "current": "4",
+                DA + "maximum": "7",
+                DA + "minimum": "1",
+                DA + "unit": "Celsius",
+            },
+        ]
+    },
+}
+
+_LAUNDRY: Resources = {
+    "/energy/consumption/vs/0": {
+        DA + "instantaneousPower": "-500",
+        DA + "instantaneousPowerUnit": "W",
+        DA + "cumulativePower": "304200",
+        DA + "cumulativeUnit": "Wh",
+    },
+    "/power/vs/0": {DA + "power": "Off"},
+    "/power/0": {"value": False},
+    "/kidslock/vs/0": {DA + "kidsLock": "Ready"},
+    "/kidslock/0": {"value": False},
+    "/remotectrl/vs/0": {DA + "remoteControlEnabled": "false"},
+    "/remotectrl/0": {"value": False},
+}
+
+_WASHER: Resources = {
+    "/course/vs/0": {DA + "options": ["DeviceType_0167", "Course_1C", "AiOption_On"]},
+    "/operational/state/vs/0": {
+        DA + "state": "Ready",
+        DA + "remainingTime": "02:49:00",
+        DA + "progressPercentage": "1",
+        DA + "progress": "None",
+        DA + "supportedProgress": ["None", "Weightsensing", "Wash", "Rinse", "Spin", "Finish"],
+    },
+    "/washer/vs/0": {
+        DA + "detergentLevel": "1",
+        DA + "waterTemperature": "40",
+        DA + "supportedWaterTemperature": ["None", "Cold", "20", "30", "40", "60", "90"],
+        DA + "spinLevel": "1400",
+        DA + "rinseCycles": "2",
+    },
+}
+
+_DRYER: Resources = {
+    "/course/vs/0": {DA + "options": ["DeviceType_0165", "Course_29", "AiOption_On"]},
+    "/power/vs/0": {DA + "power": "On"},
+    "/power/0": {"value": True},
+    "/operational/state/vs/0": {
+        DA + "state": "Run",
+        DA + "remainingTime": "00:28:00",
+        DA + "progressPercentage": "57",
+        DA + "progress": "AIDrying",
+        DA + "supportedProgress": ["None", "AIDrying", "Cooling", "Finish"],
+    },
+    "/washer/vs/0": {
+        DA + "wrinklePrevent": "Off",
+        DA + "dryLevel": "Normal",
+        DA + "supportedDryLevel": ["None", "Damp", "Less", "Normal", "More"],
+        DA + "dryTime": "00:00:00",
+        DA + "dryerType": "Electricity",
+    },
+}
+
+_COOKING: Resources = {
+    "/connected/vs/0": {DA + "connected": "On"},
+    "/doors/vs/0": {DA + "items": [{DA + "id": "0", DA + "description": "Door", DA + "openState": "Close"}]},
+    "/operational/state/vs/0": {
+        DA + "state": "Ready",
+        DA + "operationTime": "00:00:00",
+        DA + "remainingTime": "00:00:00",
+        DA + "progressPercentage": "0",
+    },
+    "/oven/vs/0": {DA + "state": "Ready", DA + "recipe": "00000000000000"},
+    "/kidslock/vs/0": {DA + "kidsLock": "Ready"},
+    "/power/vs/0": {DA + "power": "Off"},
+}
+
+_OVEN: Resources = {
+    "/mode/vs/0": {
+        DA + "supportedModes": ["UpperAirFry", "UpperConvection", "UpperTopConvection", "UpperLargeGrill"],
+        DA + "modes": ["NoOperation"],
+        DA + "options": ["DeviceType_NV7000BS/EU9", "fastpreheat_Off", "UpperLamp_Off", "steamGeneratorLevel_Empty"],
+    },
+    "/temperatures/vs/0": {
+        DA
+        + "items": [
+            {
+                DA + "id": "0",
+                DA + "description": "Temperature",
+                DA + "desired": "0",
+                DA + "current": "0",
+                DA + "increment": "5",
+                DA + "unit": "Celsius",
+            }
+        ]
+    },
+    "/remotectrl/vs/0": {DA + "remoteControlEnabled": "false"},
+}
+
+_MICROWAVE: Resources = {
+    "/mode/vs/0": {
+        DA + "supportedModes": ["Autocook", "KeepWarm", "NoOperation", "MicroWave", "Deodorization", "SteamClean"],
+        DA + "modes": ["NoOperation"],
+        DA + "options": ["DeviceType_NQ7000B-/EU1", "UpperLamp_Off", "Sound_Off"],
+    },
+}
+
+APPLIANCES: dict[str, Resources] = {
+    "fridge": {**_COMMON, **_FRIDGE},
+    "washer": {**_COMMON, **_LAUNDRY, **_WASHER},
+    "dryer": {**_COMMON, **_LAUNDRY, **_DRYER},
+    "oven": {**_COMMON, **_COOKING, **_OVEN},
+    "microwave": {**_COMMON, **_COOKING, **_MICROWAVE},
+}
+
+HOSTS = {
+    "microwave": "192.168.50.20",
+    "fridge": "192.168.50.21",
+    "washer": "192.168.50.22",
+    "oven": "192.168.50.23",
+    "dryer": "192.168.50.24",
+}
+
+
+def resources(kind: str, **changes: dict[str, Any]) -> Resources:
+    """A deep copy of one appliance's resources, with some representations merged in.
+
+    Keyword names are hrefs with `/` replaced by `_`, e.g. `operational_state_vs_0`.
+    """
+    result = copy.deepcopy(APPLIANCES[kind])
+    for key, rep in changes.items():
+        href = "/" + key.replace("_", "/")
+        result[href] = {**result.get(href, {}), **rep}
+    return result

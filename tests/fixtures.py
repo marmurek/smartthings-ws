@@ -260,6 +260,7 @@ _OVEN: Resources = {
     },
     "/remotectrl/vs/0": {DA + "remoteControlEnabled": "false"},
     # The lower cavity, which the oven serves as the `/device/1` collection.
+    "/connected/vs/1": {DA + "connected": "On"},
     "/mode/vs/1": {
         DA + "supportedModes": ["LowerConvection", "LowerBottom", "LowerAutocook", "LowerDrain"],
         DA + "modes": ["NoOperation"],

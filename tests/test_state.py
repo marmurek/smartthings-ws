@@ -377,6 +377,14 @@ def test_lower_cavity() -> None:
     assert {n for n in view.model_dump() if n.startswith("lower_")} == set(expected)
 
 
+def test_divider_out() -> None:
+    """Test that with the divider out the lower cavity offers no modes, though `/mode/vs/1` still lists them"""
+    view = read_view("oven", "10.0.0.1", resources("oven", connected_vs_1={DA + "connected": "Off"}))
+
+    assert view.lower_supported_modes == [] and view.lower_machine_state is MachineState.IDLE
+    assert not [m.mode for m in view.cook_modes or [] if m.mode.startswith("Lower")]
+
+
 def test_single_cavity_oven() -> None:
     """Test that an oven without a lower cavity reports none and offers only its own modes"""
     oven = {href: rep for href, rep in resources("oven").items() if not href.endswith("/vs/1")}

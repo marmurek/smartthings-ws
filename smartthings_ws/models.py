@@ -124,7 +124,9 @@ class ApplianceView(BaseModel):
         None, description="The lower cavity of a dual-cavity oven; the fields above describe the upper one"
     )
     lower_mode: Optional[str] = None
-    lower_supported_modes: Optional[list[str]] = Field(None, description="The modes the lower cavity can run now")
+    lower_supported_modes: Optional[list[str]] = Field(
+        None, description="The modes the lower cavity can run now; empty while the divider is out"
+    )
     lower_temperature: Optional[int] = None
     lower_target: Optional[int] = None
     lower_progress: Optional[int] = Field(None, description="%")

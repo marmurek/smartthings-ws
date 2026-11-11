@@ -47,6 +47,8 @@ LOWER_COLLECTION = "/device/1"
 LOWER_MODE = "/mode/vs/1"
 LOWER_OPERATIONAL_STATE = "/operational/state/vs/1"
 LOWER_TEMPERATURES = "/temperatures/vs/1"
+# On while the divider splits the oven into two cavities.
+LOWER_CONNECTED = "/connected/vs/1"
 
 # The modeSpec control of a mode a remote may start, not only adjust.
 START_CONTROL = "Start&Setting"
@@ -479,6 +481,18 @@ def _supported_modes(resources: Resources, href: str) -> Optional[list[str]]:
     return None if supported is None else [m for m in supported if m != "NoOperation"]
 
 
+def _lower_modes(resources: Resources) -> Optional[list[str]]:
+    """The modes the lower cavity can run now.
+
+    `/mode/vs/1` keeps listing the Lower modes with the divider out, when the
+    oven is one cavity; only `/connected/vs/1` tells the divider is in.
+    """
+    supported = _supported_modes(resources, LOWER_MODE)
+    if supported is not None and on_off(vendor(resources, LOWER_CONNECTED, "connected")) is False:
+        return []
+    return supported
+
+
 def _cook_modes(resources: Resources) -> Optional[list[CookMode]]:
     """The modes a cook can be started in now, in either cavity.
 
@@ -489,7 +503,7 @@ def _cook_modes(resources: Resources) -> Optional[list[CookMode]]:
     oven = temperature_item(resources, "Temperature")
     if spec is None or oven is None or oven.get(DA + "unit") != "Celsius":
         return None
-    live = (_supported_modes(resources, MODE) or []) + (_supported_modes(resources, LOWER_MODE) or [])
+    live = (_supported_modes(resources, MODE) or []) + (_lower_modes(resources) or [])
     modes = [_cook_mode(entry) for entry in spec]
     return [m for m in modes if m is not None and m.mode in live]
 
@@ -502,7 +516,7 @@ def _lower_cavity(resources: Resources) -> dict[str, Any]:
     return {
         "lower_machine_state": _machine_state(resources, LOWER_OPERATIONAL_STATE),
         "lower_mode": _oven_mode(resources, LOWER_MODE),
-        "lower_supported_modes": _supported_modes(resources, LOWER_MODE),
+        "lower_supported_modes": _lower_modes(resources),
         "lower_temperature": as_int(oven.get(DA + "current")) if oven else None,
         "lower_target": as_int(oven.get(DA + "desired")) if oven else None,
         "lower_progress": as_int(vendor(resources, LOWER_OPERATIONAL_STATE, "progressPercentage")),

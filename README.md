@@ -98,7 +98,7 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `demand_response_level` | fridge, laundry | Demand response (DRLC) level set by the cloud |
 | `machine_state` | laundry, oven, microwave | `idle`, `running`, `paused` |
 | `job` | laundry | Phase of the programme, e.g. `Wash`, `Spin`, `AIDrying`, `Cooling` |
-| `progress`, `remaining_minutes` | laundry, oven, microwave | Progress in %, time left. While idle a washer reports the selected programme's estimate |
+| `progress`, `remaining_minutes` | laundry, oven, microwave | Progress in %, time left. While idle a washer reports the selected programme's estimate. The microwave reports no progress |
 | `course`, `course_table` | laundry | Programme code, e.g. `1C`, and the table it belongs to, e.g. `Table_02`; the same code is another programme in another table |
 | `delay_finish_minutes` | laundry | The programme ends this long after it is started, `0` without a delay |
 | `drum_clean_due_in`, `drum_clean_last` | laundry | Cycles left until the recommended drum clean, time of the last one; the dryer keeps the same counters for its drum clean |

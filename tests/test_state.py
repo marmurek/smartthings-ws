@@ -125,6 +125,13 @@ def test_read_view(kind: str, expected: dict[str, Any]) -> None:
             None,
         ),
         ({"operational_state_vs_0": {DA + "operationTime": None}}, "elapsed_minutes", None),
+        (
+            {"operational_state_vs_0": {DA + "operationTime": "00:02:00", DA + "remainingTime": "00:01:48"}},
+            "elapsed_minutes",
+            0,
+        ),
+        ({"operational_state_vs_0": {DA + "progressPercentage": "201"}}, "progress", None),
+        ({"operational_state_vs_0": {DA + "progressPercentage": "100"}}, "progress", 100),
     ],
 )
 def test_read_view_variants(changes: dict[str, Any], field: str, expected: Any) -> None:

@@ -985,8 +985,10 @@ function CustomDevice:setProgress(name, active, value)
   if element == nil then
     return
   end
-  put(element, "visibility", active and "visible" or "hidden_adjust")
-  put(element, "value", utils.math:clamp(0, 100, active and type(value) == "number" and value or 0))
+  -- A programme reporting no progress, such as a microwave cook, shows no bar.
+  local shown = active and type(value) == "number"
+  put(element, "visibility", shown and "visible" or "hidden_adjust")
+  put(element, "value", utils.math:clamp(0, 100, shown and value or 0))
 end
 
 function CustomDevice:render()

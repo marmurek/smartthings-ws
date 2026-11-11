@@ -91,13 +91,25 @@ def on_off(value: Any) -> Optional[bool]:
     return None
 
 
-def minutes(value: Any) -> Optional[int]:
-    """An HH:MM:SS duration in whole minutes"""
+def seconds(value: Any) -> Optional[int]:
+    """An HH:MM:SS duration in seconds"""
     match = DURATION.fullmatch(value) if isinstance(value, str) else None
     if match is None:
         return None
-    hours, mins, _seconds = (int(g) for g in match.groups())
-    return hours * 60 + mins
+    hours, mins, secs = (int(g) for g in match.groups())
+    return (hours * 60 + mins) * 60 + secs
+
+
+def minutes(value: Any) -> Optional[int]:
+    """An HH:MM:SS duration in whole minutes"""
+    total = seconds(value)
+    return None if total is None else total // 60
+
+
+def _percent(value: Any) -> Optional[int]:
+    """A progress percentage; the microwave reports 201 throughout a cook, which is none"""
+    percent = as_int(value)
+    return percent if percent is not None and 0 <= percent <= 100 else None
 
 
 def _option_name(entry: Any) -> Any:
@@ -329,7 +341,7 @@ def _common(resources: Resources, kind: Kind) -> dict[str, Any]:
         "demand_response_level": as_int(vendor(resources, DEMAND_RESPONSE, "drlcLevel")),
         "machine_state": _machine_state(resources),
         "job": _job(resources),
-        "progress": as_int(vendor(resources, OPERATIONAL_STATE, "progressPercentage")),
+        "progress": _percent(vendor(resources, OPERATIONAL_STATE, "progressPercentage")),
         "remaining_minutes": minutes(vendor(resources, OPERATIONAL_STATE, "remainingTime")),
     }
 
@@ -435,9 +447,9 @@ def _elapsed_minutes(resources: Resources, href: str) -> Optional[int]:
     run: an oven reports 00:12:00 with 6 minutes left at 51%. A cook started
     without a timer reports both times as 00:00:00, so it reads 0.
     """
-    total = minutes(vendor(resources, href, "operationTime"))
-    left = minutes(vendor(resources, href, "remainingTime"))
-    return None if total is None or left is None else max(total - left, 0)
+    total = seconds(vendor(resources, href, "operationTime"))
+    left = seconds(vendor(resources, href, "remainingTime"))
+    return None if total is None or left is None else max(total - left, 0) // 60
 
 
 def _cook_mode(entry: Any) -> Optional[CookMode]:
@@ -520,7 +532,7 @@ def _lower_cavity(resources: Resources) -> dict[str, Any]:
         "lower_supported_modes": _lower_modes(resources),
         "lower_temperature": as_int(oven.get(DA + "current")) if oven else None,
         "lower_target": as_int(oven.get(DA + "desired")) if oven else None,
-        "lower_progress": as_int(vendor(resources, LOWER_OPERATIONAL_STATE, "progressPercentage")),
+        "lower_progress": _percent(vendor(resources, LOWER_OPERATIONAL_STATE, "progressPercentage")),
         "lower_remaining_minutes": minutes(vendor(resources, LOWER_OPERATIONAL_STATE, "remainingTime")),
         "lower_elapsed_minutes": _elapsed_minutes(resources, LOWER_OPERATIONAL_STATE),
     }

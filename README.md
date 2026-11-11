@@ -8,7 +8,7 @@ It is built for one household's appliances: a TP1X_REF_21K fridge, a WD7000B was
 
 - **Local control** - CoAP over DTLS to each appliance, using [smartthings-local](https://github.com/QuiteYellow/SmartThings-Local)
 - **REST API** - State of every appliance, and commands
-- **WebSocket** - The full state on connect, then every change as it is read
+- **WebSocket** - The full state on connect, then every change as the appliance notifies it or it is read
 - **Availability** - An appliance that stops answering is reported unavailable and reconnected
 - **Configurable** - Every setting in one YAML file, overridable from the environment
 - **Optional authorisation** - Shared token on REST and WebSocket, off by default
@@ -36,7 +36,7 @@ All settings live in [`config.yaml`](config.yaml). Each value can be overridden 
 | `server.host` | `HOST` | `0.0.0.0` | Interface the API listens on |
 | `server.port` | `PORT` | `8124` | Port the API listens on; differs from gree-ws so both can share a host |
 | `server.dev_mode` | `DEV_MODE` | `false` | Reload on source changes, for development |
-| `polling.interval` | `POLLING_INTERVAL` | `10` | How often to read each appliance, in seconds |
+| `polling.interval` | `POLLING_INTERVAL` | `10` | How often to read each appliance in full, in seconds; changes the appliance notifies arrive in between |
 | `polling.response_timeout` | `RESPONSE_TIMEOUT` | `30` | How long to wait for an appliance, covering the handshake and a whole read |
 | `logging.verbose` | `VERBOSE` | `false` | Log the library's exchanges with the appliances |
 | `auth.enabled` | `AUTH_ENABLED` | `false` | Require a token on every request |
@@ -78,6 +78,8 @@ Off by default. With `auth.enabled: true` every request needs the token, except 
 
 Each appliance is read with a single request for its `/device/0` collection, which returns every resource at once: 6 to 26 KB, about 2 to 7 seconds per read.
 
+After a read, every resource it returned is observed (CoAP Observe). A change the appliance notifies is reported as soon as the notification arrives; one it does not notify is reported by the next read. The relations belong to the DTLS session, so they are registered again after every reconnection, and renewed every 6 hours. Registering takes about 0.2 seconds per resource, during which commands to that appliance wait. On the fridge, the door resources and the energy consumption are confirmed to notify; the other appliances have not been tried.
+
 ### State
 
 Fields an appliance does not have are `null`. `available` turns `false` after three failed reads in a row; the other fields then keep their last known values.
@@ -88,7 +90,7 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `power` | laundry, oven, microwave | Switched on |
 | `remote_control` | laundry, oven | Remote Control enabled on the appliance's panel |
 | `child_lock` | laundry | Child lock engaged |
-| `door_open` | all | Any door open |
+| `door_open` | all | Any door open; on the fridge, the fridge or the freezer door |
 | `power_w`, `energy_kwh`, `energy_saved_kwh` | fridge, laundry | Power draw, lifetime consumption and energy saved; laundry reports no power draw |
 | `sound` | all | Key and end-of-programme sounds |
 | `alarms` | all | Codes of the alarms that are firing, `[]` when none |
@@ -165,7 +167,7 @@ On connect the server sends the state of every appliance:
 {"type": "list", "data": [{"name": "dryer", "kind": "dryer", "available": true, "progress": 57, "...": "..."}]}
 ```
 
-Then each change as it is read:
+Then each change as the appliance notifies it or it is read:
 
 ```json
 {"type": "report", "name": "dryer", "data": {"progress": {"old": 87, "new": 88}, "remaining_minutes": {"old": 9, "new": 8}}}

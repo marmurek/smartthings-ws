@@ -1,6 +1,6 @@
 """Reading appliance state out of resources."""
 
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -297,3 +297,19 @@ def test_drain_required(drain: str, expected: bool) -> None:
     view = read_view("oven", "10.0.0.1", resources("oven", mode_vs_0={DA + "options": [f"drainRequired_{drain}"]}))
 
     assert view.drain_required is expected
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, False),
+        ({"door_cooler_0": {"openState": "Open"}}, True),
+        ({"door_freezer_0": {"openState": "Open"}}, True),
+        ({"door_cooler_0": {"openState": None}}, None),
+        # The vendor door list does not decide a fridge's door_open.
+        ({"doors_vs_0": {DA + "items": [{DA + "openState": "Open"}]}}, False),
+    ],
+)
+def test_fridge_door_open(changes: dict[str, Any], expected: Optional[bool]) -> None:
+    """Test that a fridge reports a door open when its cooler or freezer door is open"""
+    assert read_view("fridge", "10.0.0.1", resources("fridge", **changes)).door_open is expected

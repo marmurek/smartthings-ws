@@ -20,6 +20,8 @@ POWER_VENDOR = "/power/vs/0"
 REMOTE_CONTROL = "/remotectrl/vs/0"
 KIDS_LOCK = "/kidslock/0"
 DOORS = "/doors/vs/0"
+COOLER_DOOR = "/door/cooler/0"
+FREEZER_DOOR = "/door/freezer/0"
 WASHER = "/washer/vs/0"
 COURSE = "/course/vs/0"
 REFRIGERATION = "/refrigeration/vs/0"
@@ -347,15 +349,19 @@ def _fridge(resources: Resources) -> dict[str, Any]:
     vacation = _mode_token(resources, "RVACATION_")
     errors = _string_list(vendor(resources, SELF_CHECK, "error"))
     door_alert = resources.get(DOOR_ALERT, {})
+    doors = [_door_open(resources, href) for href in (COOLER_DOOR, FREEZER_DOOR)]
     return {
+        # The fridge notifies changes of its OCF door resources, not of the
+        # vendor list the other kinds report their door in.
+        "door_open": None if None in doors else any(doors),
         "fridge_temperature": _item_value(fridge, "current"),
         "fridge_target": _item_value(fridge, "desired"),
         "fridge_range": _item_range(fridge),
         "freezer_temperature": _item_value(freezer, "current"),
         "freezer_target": _item_value(freezer, "desired"),
         "freezer_range": _item_range(freezer),
-        "fridge_door_open": _door_open(resources, "/door/cooler/0"),
-        "freezer_door_open": _door_open(resources, "/door/freezer/0"),
+        "fridge_door_open": doors[0],
+        "freezer_door_open": doors[1],
         "rapid_cooling": on_off(vendor(resources, REFRIGERATION, "rapidFridge")),
         "rapid_freezing": on_off(vendor(resources, REFRIGERATION, "rapidFreezing")),
         "vacation_mode": None if vacation is None else vacation == "ON",

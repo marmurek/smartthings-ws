@@ -1,9 +1,14 @@
-"""Polling the appliances, reporting changes and sending commands."""
+"""Polling and observing the appliances, reporting changes and sending commands.
+
+Each appliance is read in full at the polling interval and its resources are
+observed in between, so a change the appliance notifies is reported at once and
+one it does not notify by the next read.
+"""
 
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -68,6 +73,17 @@ def changes_between(old: ApplianceView, new: ApplianceView) -> dict[str, dict[st
 
 
 @dataclass
+class Notifications:
+    """The Observe notifications of one appliance being applied"""
+
+    # The notifications received during each read in progress. A read returns
+    # the state from before them, so they are applied over its result.
+    during_reads: list[Resources] = field(default_factory=list)
+    # Change reports of notifications, kept until they are sent.
+    reports: set[asyncio.Task[None]] = field(default_factory=set)
+
+
+@dataclass
 class TrackedAppliance:
     """What the manager holds for one appliance"""
 
@@ -79,6 +95,7 @@ class TrackedAppliance:
     task: Optional[asyncio.Task[None]] = None
     # The read that follows a command, kept so it is not garbage collected mid-run.
     read_back: Optional[asyncio.Task[None]] = None
+    notifications: Notifications = field(default_factory=Notifications)
 
 
 class ApplianceManager:
@@ -109,16 +126,26 @@ class ApplianceManager:
             # RSA key generation takes long enough to be worth keeping off the event loop.
             self._certificate = await asyncio.to_thread(mint_client_certificate)
 
+        loop = asyncio.get_running_loop()
         for appliance in self.settings.appliances:
             tracked = self.appliances[appliance.name]
+
+            def handler(href: str, rep: dict[str, Any], name: str = appliance.name) -> None:
+                loop.call_soon_threadsafe(self._notified, name, href, rep)
+
             tracked.connection = ApplianceConnection(
-                appliance, self._certificate, self.settings.polling.response_timeout, self._session_factory
+                appliance, self._certificate, self.settings.polling.response_timeout, self._session_factory, handler
             )
             tracked.task = asyncio.create_task(self._poll(appliance.name))
 
     async def stop(self) -> None:
         """Stop polling and close every connection"""
-        tasks = [task for t in self.appliances.values() for task in (t.task, t.read_back) if task is not None]
+        tasks = [
+            task
+            for t in self.appliances.values()
+            for task in (t.task, t.read_back, *t.notifications.reports)
+            if task is not None
+        ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -142,10 +169,13 @@ class ApplianceManager:
         return tracked.connection
 
     async def refresh(self, name: str) -> ApplianceView:
-        """Read one appliance and report whatever changed"""
+        """Read one appliance, report whatever changed and observe its resources"""
         tracked = self._tracked(name)
+        connection = self._connection(tracked)
+        notified: Resources = {}
+        tracked.notifications.during_reads.append(notified)
         try:
-            resources = await self._connection(tracked).read_resources()
+            resources = await connection.read_resources()
         except ApplianceUnavailable as e:
             tracked.missed_reads += 1
             if tracked.missed_reads == 1:
@@ -153,23 +183,63 @@ class ApplianceManager:
             if tracked.missed_reads >= UNAVAILABLE_AFTER:
                 await self._publish(tracked, tracked.view.model_copy(update={"available": False}))
             raise
+        finally:
+            tracked.notifications.during_reads.remove(notified)
 
         if tracked.missed_reads:
             logger.info("%s is answering again after %d failed reads", name, tracked.missed_reads)
         tracked.missed_reads = 0
+        for href, rep in notified.items():
+            resources[href] = {**resources.get(href, {}), **rep}
         tracked.resources = resources
         await self._publish(tracked, read_view(name, tracked.view.host, resources))
-        return tracked.view
+        view = tracked.view
 
-    async def _publish(self, tracked: TrackedAppliance, view: ApplianceView) -> None:
-        """Store a new reading and tell clients what moved"""
+        try:
+            await connection.observe(resources)
+        except ApplianceUnavailable as e:
+            # The read succeeded; the next one reconnects and observes again.
+            logger.warning("Observing %s failed: %s", name, e)
+        return view
+
+    def _notified(self, name: str, href: str, rep: dict[str, Any]) -> None:
+        """Apply a notification and report what it changed, on the event loop"""
+        tracked = self.appliances[name]
+        for notified in tracked.notifications.during_reads:
+            notified[href] = {**notified.get(href, {}), **rep}
+        if tracked.resources is None:
+            return
+
+        # A notification may carry only the keys that changed.
+        tracked.resources[href] = {**tracked.resources.get(href, {}), **rep}
+        # Availability follows the reads; a notification does not restore it.
+        if not tracked.view.available:
+            return
+
+        # The view is stored here rather than in the task, so a read published
+        # before the task runs is not overwritten with this older state.
+        report = self._store(tracked, read_view(name, tracked.view.host, tracked.resources))
+        if report is not None:
+            task = asyncio.create_task(self.connection_manager.broadcast(report))
+            tracked.notifications.reports.add(task)
+            task.add_done_callback(tracked.notifications.reports.discard)
+
+    @staticmethod
+    def _store(tracked: TrackedAppliance, view: ApplianceView) -> Optional[dict[str, Any]]:
+        """Store a new reading, returning the report of what moved, if anything did"""
         changes = changes_between(tracked.view, view)
         tracked.view = view
         if not changes:
-            return
+            return None
 
         logger.debug("%s changed: %s", view.name, changes)
-        await self.connection_manager.broadcast({"type": "report", "name": view.name, "data": changes})
+        return {"type": "report", "name": view.name, "data": changes}
+
+    async def _publish(self, tracked: TrackedAppliance, view: ApplianceView) -> None:
+        """Store a new reading and tell clients what moved"""
+        report = self._store(tracked, view)
+        if report is not None:
+            await self.connection_manager.broadcast(report)
 
     async def _poll(self, name: str) -> None:
         """Read one appliance at the polling interval until cancelled"""

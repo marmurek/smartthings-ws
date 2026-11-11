@@ -1,11 +1,21 @@
 """The session to one appliance."""
 
+from typing import Any
+
 import cbor2
 import pytest
 
+from smartthings_ws import connection as connection_module
+
 from smartthings_ws.certificate import ClientCertificate
 from smartthings_ws.config import ApplianceSettings
-from smartthings_ws.connection import ApplianceConnection, coap_code, local_port, parse_collection
+from smartthings_ws.connection import (
+    MAX_OBSERVED,
+    ApplianceConnection,
+    coap_code,
+    local_port,
+    parse_collection,
+)
 from smartthings_ws.errors import ApplianceUnavailable, CommandRejected
 from tests.conftest import BAD_REQUEST, FakeNetwork
 from tests.fixtures import HOSTS
@@ -125,3 +135,103 @@ def test_local_port_for_a_hostname() -> None:
 def test_coap_code(code: int, expected: str) -> None:
     """Test that response codes print in dotted notation"""
     assert coap_code(code) == expected
+
+
+def observing(
+    network: FakeNetwork, certificate: ClientCertificate
+) -> tuple[ApplianceConnection, list[tuple[str, Any]]]:
+    """A connection to the fridge recording the notifications it hands on"""
+    received: list[tuple[str, Any]] = []
+    connection = ApplianceConnection(
+        ApplianceSettings(name="fridge", host=HOSTS["fridge"]),
+        certificate,
+        1.0,
+        network,
+        lambda href, rep: received.append((href, rep)),
+    )
+    return connection, received
+
+
+async def test_observe_once_per_session(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that the resources are observed once per session and again on a new one"""
+    connection, _ = observing(network, certificate)
+    fridge = network["fridge"]
+
+    await connection.observe(["/door/freezer/0", "/door/cooler/0"])
+    await connection.observe(["/door/freezer/0", "/door/cooler/0"])
+    assert network.observation("fridge").subscribed == ["/door/cooler/0", "/door/freezer/0"]
+
+    fridge.unreachable = True
+    with pytest.raises(ApplianceUnavailable):
+        await connection.read_resources()
+    fridge.unreachable = False
+    await connection.observe(["/door/cooler/0"])
+
+    assert network.observation("fridge").subscribed == ["/door/cooler/0", "/door/freezer/0", "/door/cooler/0"]
+    assert not network.observation("fridge").renewed
+
+
+async def test_observe_renewal(
+    network: FakeNetwork, certificate: ClientCertificate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that relations older than the refresh interval are renewed on the same session"""
+    monkeypatch.setattr(connection_module, "OBSERVE_REFRESH", 0.0)
+    connection, _ = observing(network, certificate)
+
+    await connection.observe(["/door/cooler/0"])
+    await connection.observe(["/door/cooler/0"])
+
+    assert network.observation("fridge").subscribed == ["/door/cooler/0"]
+    assert network.observation("fridge").renewed == ["/door/cooler/0"]
+    assert network["fridge"].events == ["connect"]
+
+
+async def test_observe_limit(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that no more resources are observed than the library keeps relations for"""
+    connection, _ = observing(network, certificate)
+
+    await connection.observe([f"/r/{i}" for i in range(MAX_OBSERVED + 10)])
+
+    assert len(network.observation("fridge").subscribed) == MAX_OBSERVED
+
+
+async def test_observe_without_handler(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a connection without a notification handler observes nothing"""
+    await connect(network, certificate, "fridge").observe(["/door/cooler/0"])
+
+    assert not network.observation("fridge").subscribed and not network["fridge"].events
+
+
+async def test_observe_failure_reconnects(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a failed registration drops the session like a failed exchange"""
+    connection, _ = observing(network, certificate)
+    network.observation("fridge").error = TimeoutError("no answer")
+
+    with pytest.raises(ApplianceUnavailable, match="fridge did not answer: TimeoutError"):
+        await connection.observe(["/door/cooler/0"])
+
+    network.observation("fridge").error = None
+    await connection.observe(["/door/cooler/0"])
+    assert network["fridge"].events == ["connect", "close", "connect"]
+    assert network.observation("fridge").subscribed == ["/door/cooler/0"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "encode", "expected"),
+    [
+        ({"openState": "Open"}, True, [("/door/cooler/0", {"openState": "Open"})]),
+        (["not", "a", "representation"], True, []),
+        (b"\xff", False, []),
+        (b"", False, []),
+    ],
+)
+async def test_notification_is_decoded(
+    network: FakeNetwork, certificate: ClientCertificate, payload: Any, encode: bool, expected: list[Any]
+) -> None:
+    """Test that only notifications carrying a representation reach the handler"""
+    connection, received = observing(network, certificate)
+    await connection.read_resources()
+
+    network.notify("fridge", "/door/cooler/0", payload, encode=encode)
+
+    assert received == expected

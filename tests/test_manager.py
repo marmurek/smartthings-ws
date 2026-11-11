@@ -182,3 +182,137 @@ async def test_stop_cancels_a_pending_read_back(network: FakeNetwork, certificat
 
     pending = manager.appliances["fridge"].read_back
     assert pending is not None and pending.done()
+
+
+def record_reports(manager: ApplianceManager, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Collect what the manager broadcasts instead of sending it"""
+    sent: list[dict[str, Any]] = []
+
+    async def broadcast(data: dict[str, Any]) -> None:
+        sent.append(data)
+
+    monkeypatch.setattr(manager.connection_manager, "broadcast", broadcast)
+    return sent
+
+
+async def settled(manager: ApplianceManager, name: str) -> None:
+    """Let the notifications already sent be applied and reported"""
+    for _ in range(3):
+        await asyncio.sleep(0)
+    await asyncio.gather(*manager.appliances[name].notifications.reports)
+
+
+async def test_read_observes_the_resources(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a read observes every resource it returned"""
+    manager = await started(network, certificate)
+
+    await manager.refresh("fridge")
+
+    assert sorted(network.observation("fridge").subscribed) == sorted(network["fridge"].resources)
+
+
+async def test_notification_is_reported(
+    network: FakeNetwork, certificate: ClientCertificate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that a notification changes the state and is reported without a read"""
+    manager = await started(network, certificate)
+    await manager.refresh("fridge")
+    sent = record_reports(manager, monkeypatch)
+
+    network.notify("fridge", "/door/cooler/0", {"openState": "Open"})
+    await settled(manager, "fridge")
+
+    assert sent == [
+        {
+            "type": "report",
+            "name": "fridge",
+            "data": {"door_open": {"old": False, "new": True}, "fridge_door_open": {"old": False, "new": True}},
+        }
+    ]
+
+
+async def test_partial_notification_is_merged(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a notification carrying some keys of a resource keeps the others"""
+    manager = await started(network, certificate)
+    await manager.refresh("fridge")
+    before = manager.view("fridge")
+
+    network.notify("fridge", "/energy/consumption/vs/0", {DA + "cumulativePower": "500000"})
+    await settled(manager, "fridge")
+
+    assert manager.view("fridge").energy_kwh == 500.0
+    assert before.energy_saved_kwh is not None
+    assert manager.view("fridge").energy_saved_kwh == before.energy_saved_kwh
+
+
+async def test_notification_during_a_read(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a notification arriving while a read is under way is not undone by its result"""
+    manager = await started(network, certificate)
+    fridge = network["fridge"]
+    loop = asyncio.get_running_loop()
+
+    def notify_mid_read() -> None:
+        network.notify("fridge", "/door/freezer/0", {"openState": "Open"})
+        # Hold the read until the event loop has handled the notification.
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=1)
+
+    network.observation("fridge").before_read = notify_mid_read
+
+    view = await manager.refresh("fridge")
+
+    assert fridge.resources["/door/freezer/0"] == {"openState": "Close"}
+    assert view.freezer_door_open is True
+
+
+async def test_notification_before_the_first_read(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a notification without a read to apply it to changes nothing"""
+    manager = await started(network, certificate)
+    connection = manager.appliances["fridge"].connection
+    assert connection is not None
+    await connection.read_resources()
+
+    network.notify("fridge", "/door/cooler/0", {"openState": "Open"})
+    await settled(manager, "fridge")
+
+    assert not manager.view("fridge").available
+
+
+async def test_failed_observation_keeps_the_read(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a read whose observation fails still reports the state it read"""
+    manager = await started(network, certificate)
+    network.observation("fridge").error = TimeoutError("no answer")
+
+    view = await manager.refresh("fridge")
+
+    assert view.available and manager.appliances["fridge"].missed_reads == 0
+
+
+async def test_notification_updates_the_state_at_once(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a notification changes the state before its report is sent, so a later read is not overwritten"""
+    manager = await started(network, certificate)
+    await manager.refresh("fridge")
+
+    network.notify("fridge", "/door/cooler/0", {"openState": "Open"})
+    await asyncio.sleep(0)
+
+    assert manager.view("fridge").fridge_door_open is True
+
+
+async def test_notification_keeps_an_unavailable_appliance_unavailable(
+    network: FakeNetwork, certificate: ClientCertificate
+) -> None:
+    """Test that a notification does not report an appliance whose reads fail as available again"""
+    manager = await started(network, certificate)
+    await manager.refresh("fridge")
+    network["fridge"].get_reply = (0x84, None)
+    for _ in range(UNAVAILABLE_AFTER):
+        with pytest.raises(ApplianceUnavailable):
+            await manager.refresh("fridge")
+
+    network.notify("fridge", "/door/cooler/0", {"openState": "Open"})
+    await settled(manager, "fridge")
+
+    assert not manager.view("fridge").available
+    network["fridge"].get_reply = None
+    network["fridge"].resources["/door/cooler/0"] = {"openState": "Open"}
+    assert (await manager.refresh("fridge")).fridge_door_open is True

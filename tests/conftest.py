@@ -1,7 +1,7 @@
 """Shared fixtures: a fake network of appliances behind the session interface."""
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Optional, Sequence
+from typing import Any, Callable, Iterable, Iterator, Optional, Sequence
 
 import cbor2
 import pytest
@@ -35,14 +35,41 @@ class FakeAppliance:
     on_post: Optional[Callable[[Resources, str, dict[str, Any]], None]] = None
 
 
+@dataclass
+class FakeObservation:
+    """Observing one appliance of the fake network"""
+
+    # The hrefs of every Observe registration, and of every renewal.
+    subscribed: list[str] = field(default_factory=list)
+    renewed: list[str] = field(default_factory=list)
+    # Raised by a registration instead of accepting it.
+    error: Optional[Exception] = None
+    # Called by the state read before it answers, e.g. to send a notification.
+    before_read: Optional[Callable[[], None]] = None
+
+
+@dataclass(frozen=True)
+class Delivery:
+    """The part of an ObserveDelivery the application reads"""
+
+    href: str
+    payload: bytes
+
+
 class FakeSession:
     """A DtlsCoapSession answering from a FakeAppliance"""
 
-    def __init__(self, appliance: FakeAppliance, host: str, port: int, local_port: int) -> None:
+    def __init__(
+        self,
+        appliance: FakeAppliance,
+        observation: FakeObservation,
+        address: tuple[str, int, int],
+        on_observe_delivery: Optional[Callable[[Delivery], None]],
+    ) -> None:
         self.appliance = appliance
-        self.host = host
-        self.port = port
-        self.local_port = local_port
+        self.observation = observation
+        self.host, self.port, self.local_port = address
+        self.on_observe_delivery = on_observe_delivery
 
     def connect(self, *, timeout: Optional[float] = None) -> None:
         """Fail like a handshake that gets no answer while unreachable"""
@@ -59,6 +86,8 @@ class FakeSession:
         assert list(path_segs) == ["device", "0"] and timeout > 0
         if self.appliance.unreachable:
             raise TimeoutError("read timed out")
+        if self.observation.before_read is not None:
+            self.observation.before_read()
         if self.appliance.get_reply is not None:
             code, reply = self.appliance.get_reply
             return code, b"" if reply is None else cbor2.dumps(reply)
@@ -78,6 +107,16 @@ class FakeSession:
             self.appliance.on_post(self.appliance.resources, href, body)
         return self.appliance.post_reply
 
+    def subscribe(self, path_segs: Sequence[str]) -> None:
+        """Record a registration"""
+        if self.observation.error is not None:
+            raise self.observation.error
+        self.observation.subscribed.append("/" + "/".join(path_segs))
+
+    def refresh_observes(self, paths: Iterable[Sequence[str]]) -> None:
+        """Record a renewal"""
+        self.observation.renewed += ["/" + "/".join(p) for p in paths]
+
     def close(self) -> None:
         """Count the close"""
         self.appliance.events.append("close")
@@ -90,14 +129,35 @@ class FakeNetwork:
         self.appliances: dict[str, FakeAppliance] = {
             host: FakeAppliance(resources(kind)) for kind, host in HOSTS.items()
         }
+        self.observations = {host: FakeObservation() for host in HOSTS.values()}
         self.sessions: list[FakeSession] = []
 
     def __getitem__(self, name: str) -> FakeAppliance:
         return self.appliances[HOSTS[name]]
 
-    def __call__(self, host: str, port: int, *, auth: Any, local_port: int) -> FakeSession:
+    def observation(self, name: str) -> FakeObservation:
+        """What observing one appliance did"""
+        return self.observations[HOSTS[name]]
+
+    def notify(self, name: str, href: str, payload: Any, *, encode: bool = True) -> None:
+        """Send a notification on the appliance's latest session, as its reader thread would"""
+        session = [s for s in self.sessions if s.host == HOSTS[name]][-1]
+        assert session.on_observe_delivery is not None
+        session.on_observe_delivery(Delivery(href, cbor2.dumps(payload) if encode else payload))
+
+    def __call__(
+        self,
+        host: str,
+        port: int,
+        *,
+        auth: Any,
+        local_port: int,
+        on_observe_delivery: Optional[Callable[[Delivery], None]] = None,
+    ) -> FakeSession:
         assert auth is not None
-        session = FakeSession(self.appliances[host], host, port, local_port)
+        session = FakeSession(
+            self.appliances[host], self.observations[host], (host, port, local_port), on_observe_delivery
+        )
         self.sessions.append(session)
         return session
 

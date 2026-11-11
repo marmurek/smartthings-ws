@@ -4,13 +4,19 @@ smartthings-local is blocking and threaded, so every exchange runs in a worker
 thread. An appliance serves one DTLS session at a time, so the exchanges of one
 appliance are serialised behind a lock and the session is kept open between
 them.
+
+Changes are also observed (CoAP Observe, RFC 7641): the session's reader thread
+hands every notification to the callback the connection was created with.
+Observe relations belong to the session, so a new session subscribes again.
 """
 
 import asyncio
+import functools
 import ipaddress
 import logging
+import time
 import zlib
-from typing import Any, Callable, Optional, Protocol, Sequence
+from typing import Any, Callable, Iterable, Optional, Protocol, Sequence, TypeVar
 
 import cbor2
 from smartthings_local.errors import SmartThingsLocalError
@@ -36,7 +42,20 @@ LOCAL_PORT_BASE = 61000
 # errors and a malformed message.
 EXCHANGE_ERRORS = (SmartThingsLocalError, OSError, TimeoutError, ValueError)
 
+# The most Observe relations smartthings-local keeps on one session.
+MAX_OBSERVED = 255
+
+# The appliance firmware can stop delivering notifications on a healthy
+# session, so the relations are renewed at this interval, in seconds.
+OBSERVE_REFRESH = 6 * 3600.0
+
 Resources = dict[str, dict[str, Any]]
+
+# Called from the session's reader thread with the href and the representation
+# a notification carries. The representation may hold only the changed keys.
+NotificationHandler = Callable[[str, dict[str, Any]], None]
+
+T = TypeVar("T")
 
 
 class Session(Protocol):
@@ -53,6 +72,12 @@ class Session(Protocol):
 
     def post(self, path_segs: Sequence[str], body_cbor: bytes, *, timeout: float = 8.0) -> tuple[int, bytes]:
         """Update one resource"""
+
+    def subscribe(self, path_segs: Sequence[str]) -> Any:
+        """Register an Observe relation on one resource"""
+
+    def refresh_observes(self, paths: Iterable[Sequence[str]]) -> Any:
+        """Replace the Observe relations of the given resources"""
 
     def close(self) -> None:
         """Close the session and its socket"""
@@ -92,6 +117,11 @@ def parse_collection(body: Any) -> Resources:
     }
 
 
+def _segments(href: str) -> list[str]:
+    """The path segments of an href"""
+    return [s for s in href.split("/") if s]
+
+
 def _describe(payload: bytes) -> str:
     """A response body as text, for an error message"""
     if not payload:
@@ -111,17 +141,27 @@ class ApplianceConnection:
         certificate: ClientCertificate,
         timeout: float,
         session_factory: SessionFactory = DtlsCoapSession,
+        on_notification: Optional[NotificationHandler] = None,
     ) -> None:
         self.appliance = appliance
-        self._certificate = certificate
         self._timeout = timeout
-        self._session_factory = session_factory
+        self._on_notification = on_notification
+        self._open_session = functools.partial(
+            session_factory,
+            appliance.host,
+            appliance.port,
+            auth=CertificateAuth.from_memory(certificate.certificate_pem, certificate.private_key_pem),
+            local_port=local_port(appliance.host),
+            on_observe_delivery=None if on_notification is None else functools.partial(self._deliver, on_notification),
+        )
         self._session: Optional[Session] = None
+        # The session the Observe relations were registered on, and when.
+        self._observed: Optional[tuple[Session, float]] = None
         self._lock = asyncio.Lock()
 
     async def read_resources(self) -> Resources:
         """Read every resource of the appliance"""
-        code, payload = await self._exchange(lambda s: s.get(list(DEVICE_COLLECTION), timeout=self._timeout))
+        code, payload = await self._run(lambda s: s.get(list(DEVICE_COLLECTION), timeout=self._timeout))
         if not is_success(code):
             raise ApplianceUnavailable(f"{self.appliance.name} answered the state read with {coap_code(code)}")
 
@@ -132,11 +172,11 @@ class ApplianceConnection:
 
     async def write(self, href: str, body: dict[str, Any]) -> None:
         """Update one resource, raising CommandRejected if the appliance refuses"""
-        segments = [s for s in href.split("/") if s]
+        segments = _segments(href)
         encoded = cbor2.dumps(body)
         logger.info("Writing %s %s: %s", self.appliance.name, href, body)
 
-        code, payload = await self._exchange(lambda s: s.post(segments, encoded, timeout=self._timeout))
+        code, payload = await self._run(lambda s: s.post(segments, encoded, timeout=self._timeout))
         if not is_success(code):
             reason = _describe(payload)
             raise CommandRejected(
@@ -144,12 +184,55 @@ class ApplianceConnection:
                 + (f": {reason}" if reason else "")
             )
 
+    async def observe(self, hrefs: Iterable[str]) -> None:
+        """Observe the resources, unless the current session already does.
+
+        Registers the relations on a new session and renews them once they are
+        OBSERVE_REFRESH old. Without a notification handler nothing is observed.
+        """
+        if self._on_notification is None or self._observes(self._session):
+            return
+        paths = [_segments(href) for href in sorted(hrefs)][:MAX_OBSERVED]
+        await self._run(lambda s: self._register(s, paths))
+
+    def _observes(self, session: Optional[Session]) -> bool:
+        """Whether the session holds relations that are not due for renewal"""
+        return (
+            self._observed is not None
+            and self._observed[0] is session
+            and time.monotonic() - self._observed[1] < OBSERVE_REFRESH
+        )
+
+    def _register(self, session: Session, paths: list[list[str]]) -> None:
+        """Register or renew the Observe relations on the open session"""
+        # Another call may have registered the relations while the lock was awaited.
+        if self._observes(session):
+            return
+        if self._observed is not None and self._observed[0] is session:
+            logger.info("Renewing the observation of %d resources of %s", len(paths), self.appliance.name)
+            session.refresh_observes(paths)
+        else:
+            logger.info("Observing %d resources of %s", len(paths), self.appliance.name)
+            for path in paths:
+                session.subscribe(path)
+        self._observed = (session, time.monotonic())
+
+    def _deliver(self, handler: NotificationHandler, delivery: Any) -> None:
+        """Decode a notification and hand it to the handler, on the reader thread"""
+        try:
+            rep = cbor2.loads(delivery.payload)
+        except cbor2.CBORDecodeError as e:
+            logger.debug("%s sent an unreadable notification for %s: %s", self.appliance.name, delivery.href, e)
+            return
+        if isinstance(rep, dict):
+            handler(delivery.href, rep)
+
     async def close(self) -> None:
         """Close the session, if one is open"""
         async with self._lock:
             await asyncio.to_thread(self._drop_session)
 
-    async def _exchange(self, request: Callable[[Session], tuple[int, bytes]]) -> tuple[int, bytes]:
+    async def _run(self, request: Callable[[Session], T]) -> T:
         """Run one request in a worker thread, connecting first if needed"""
         async with self._lock:
             try:
@@ -160,7 +243,7 @@ class ApplianceConnection:
                 await asyncio.to_thread(self._drop_session)
                 raise ApplianceUnavailable(f"{self.appliance.name} did not answer: {type(e).__name__}: {e}") from e
 
-    def _request(self, request: Callable[[Session], tuple[int, bytes]]) -> tuple[int, bytes]:
+    def _request(self, request: Callable[[Session], T]) -> T:
         """Send one request on the open session, opening it first if needed"""
         if self._session is None:
             self._session = self._connect()
@@ -169,12 +252,7 @@ class ApplianceConnection:
     def _connect(self) -> Session:
         """Open a session to the appliance"""
         logger.info("Connecting to %s at %s:%d", self.appliance.name, self.appliance.host, self.appliance.port)
-        session = self._session_factory(
-            self.appliance.host,
-            self.appliance.port,
-            auth=CertificateAuth.from_memory(self._certificate.certificate_pem, self._certificate.private_key_pem),
-            local_port=local_port(self.appliance.host),
-        )
+        session = self._open_session()
         try:
             session.connect(timeout=self._timeout)
             session.start_reader()

@@ -176,3 +176,62 @@ def test_delay_out_of_range() -> None:
     """Test that a delay longer than a day is refused by the command model"""
     with pytest.raises(ValueError):
         ApplianceUpdate(delay_finish_minutes=24 * 60 + 1)
+
+
+REMOTE_ON = {"remotectrl_vs_0": {DA + "remoteControlEnabled": "true"}}
+
+
+def cook_plan(cook: dict[str, Any], **changes: dict[str, Any]) -> list[Write]:
+    """The writes a cook start produces on the fixture oven, Remote Control on unless changed"""
+    oven = resources("oven", **{**REMOTE_ON, **changes})
+    return plan_writes(read_view("oven", "10.0.0.1", oven), oven, ApplianceUpdate(cook=cook))
+
+
+@pytest.mark.parametrize(
+    ("cook", "temperature", "duration"),
+    [
+        ({"mode": "UpperConvection", "temperature": 180, "minutes": 75}, "180", "01:15:00"),
+        ({"mode": "UpperLargeGrill"}, "220", "01:00:00"),
+    ],
+)
+def test_cook_start(cook: dict[str, Any], temperature: str, duration: str) -> None:
+    """Test that a cook starts in one collection write, the mode's defaults filling what is left out"""
+    assert cook_plan(cook) == [
+        Write(
+            "/device/0",
+            [
+                {"href": "/devices/0"},
+                {"href": "/mode/vs/0", "rep": {DA + "modes": [cook["mode"]]}},
+                {
+                    "href": "/temperatures/vs/0",
+                    "rep": {DA + "items": [{DA + "id": "0", DA + "desired": temperature, DA + "unit": "Celsius"}]},
+                },
+                {"href": "/operational/state/vs/0", "rep": {DA + "operationTime": duration, DA + "state": "Run"}},
+            ],
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("cook", "changes", "message"),
+    [
+        ({"mode": "Convection"}, {}, "cannot start a cook in Convection; it offers UpperConvection, UpperLargeGrill"),
+        ({"mode": "UpperAutocook"}, {}, "cannot start a cook in UpperAutocook"),
+        ({"mode": "UpperConvection"}, {"remotectrl_vs_0": {DA + "remoteControlEnabled": "false"}}, "Remote Control"),
+        ({"mode": "UpperConvection"}, {"mode_vs_0": {DA + "modes": ["UpperConvection"]}}, "already cooking"),
+        ({"mode": "UpperConvection"}, {"operational_state_vs_0": {DA + "state": "Run"}}, "already cooking"),
+        ({"mode": "UpperConvection", "temperature": 260}, {}, "40..250 °C, not 260"),
+        ({"mode": "UpperConvection", "temperature": 182}, {}, "steps of 5 °C"),
+        ({"mode": "UpperConvection", "minutes": 0}, {}, "1..1439 minutes, not 0"),
+    ],
+)
+def test_cook_start_invalid(cook: dict[str, Any], changes: dict[str, Any], message: str) -> None:
+    """Test that a cook the oven does not offer or cannot start now is refused before anything is sent"""
+    with pytest.raises(InvalidCommand, match=message):
+        cook_plan(cook, **changes)
+
+
+def test_cook_start_without_mode_spec() -> None:
+    """Test that an appliance declaring no startable modes refuses a cook"""
+    with pytest.raises(InvalidCommand, match="it offers none"):
+        plan("microwave", cook={"mode": "MicroWave"})

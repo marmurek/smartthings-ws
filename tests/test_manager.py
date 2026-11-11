@@ -245,6 +245,18 @@ async def test_partial_notification_is_merged(network: FakeNetwork, certificate:
     assert manager.view("fridge").energy_saved_kwh == before.energy_saved_kwh
 
 
+async def test_notification_of_one_option(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a notification carrying one entry of an options list keeps the other entries"""
+    manager = await started(network, certificate)
+    await manager.refresh("dryer")
+
+    network.notify("dryer", "/course/vs/0", {DA + "options": ["Course_2B"]})
+    await settled(manager, "dryer")
+
+    view = manager.view("dryer")
+    assert (view.course, view.drum_clean_due_in, view.drum_light) == ("2B", 0, False)
+
+
 async def test_notification_during_a_read(network: FakeNetwork, certificate: ClientCertificate) -> None:
     """Test that a notification arriving while a read is under way is not undone by its result"""
     manager = await started(network, certificate)

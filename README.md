@@ -99,9 +99,9 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `machine_state` | laundry, oven, microwave | `idle`, `running`, `paused` |
 | `job` | laundry | Phase of the programme, e.g. `Wash`, `Spin`, `AIDrying`, `Cooling` |
 | `progress`, `remaining_minutes` | laundry, oven, microwave | Progress in %, time left. While idle a washer reports the selected programme's estimate |
-| `course` | laundry | Programme code, e.g. `1C` |
+| `course`, `course_table` | laundry | Programme code, e.g. `1C`, and the table it belongs to, e.g. `Table_02`; the same code is another programme in another table |
 | `delay_finish_minutes` | laundry | The programme ends this long after it is started, `0` without a delay |
-| `drum_clean_due_in`, `drum_clean_last` | laundry | Cycles left until the recommended drum clean, time of the last one. On the dryer the counter reads 0 with 180 cycles against an interval of 25, so its meaning there is unconfirmed |
+| `drum_clean_due_in`, `drum_clean_last` | laundry | Cycles left until the recommended drum clean, time of the last one; the dryer keeps the same counters for its drum clean |
 | `water_temperature`, `spin_level`, `rinse_cycles` | washer | Programme settings, with the values offered in `supported_water_temperatures`, `supported_spin_levels`, `supported_rinse_cycles` |
 | `detergent_dose`, `softener_dose`, `detergent_low`, `softener_low` | washer | Automatic dosing level, and the tank running low |
 | `water_liters` | washer | Lifetime water consumption |
@@ -117,6 +117,7 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `self_check_result`, `self_check_errors` | fridge | Result of the last self check and its error codes |
 | `oven_mode`, `oven_temperature`, `oven_target`, `lamp` | oven, microwave | Cooking mode while cooking, °C, oven light |
 | `supported_modes`, `default_mode` | oven, microwave | Cooking modes the appliance offers |
+| `cook_modes` | oven | The modes a cook can be started in now, each with `temperature_min`, `temperature_max`, `temperature_default`, `temperature_step` (°C) and `minutes_min`, `minutes_max`, `minutes_default`. They come from the oven's `modeSpec` and follow its divider |
 | `elapsed_minutes` | oven, microwave | Cooking time so far |
 | `fast_preheat` | oven, microwave | Fast preheat |
 | `timer_set`, `timer_remaining`, `timer_state` | oven, microwave | Kitchen timer; the unit is unconfirmed, both read 0 while idle |
@@ -139,6 +140,7 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `water_temperature`, `spin_level`, `rinse_cycles` | washer | `/washer/vs/0`, one of the supported values |
 | `dry_level`, `dry_time_minutes`, `wrinkle_prevent` | dryer | `/washer/vs/0`, one of the supported values |
 | `delay_finish_minutes` | laundry | `/operational/state/vs/0`, 0 to 1440 minutes; `0` clears the delay |
+| `cook`: `{"mode", "temperature", "minutes"}` | oven | One write to `/device/0` carrying the mode, setpoint and cooking time with `Run`. The mode is one of `cook_modes`, the values left out are its defaults, and the time includes the preheat |
 
 ```bash
 curl -X PATCH http://localhost:8124/appliances/fridge -H 'Content-Type: application/json' -d '{"fridge_target": 4}'
@@ -153,7 +155,7 @@ curl -X PATCH http://localhost:8124/appliances/fridge -H 'Content-Type: applicat
 | `422` | The appliance does not support the command, or a value is out of range |
 | `503` | The appliance did not answer, or has not been read yet |
 
-**Laundry and ovens refuse most commands while Remote Control is off** (`remote_control: false`), which is the default after every programme. Enable it on the appliance's panel first. Starting an oven programme needs the mode, temperature and time together and is not supported yet; `stop` is.
+**Laundry and ovens refuse most commands while Remote Control is off** (`remote_control: false`), which is the default after every programme. Enable it on the appliance's panel first. An oven with Remote Control off accepts a cook start and silently drops it, so `cook` is refused then. `operation: start` resumes a cook, it does not start one.
 
 The writes of the settings follow the formats the Home Assistant `localthings` integration uses for these resources, and have not been tried on these appliances yet.
 
@@ -185,7 +187,7 @@ The answer is `{"type": "applied", ...}`, `{"type": "not_changed", ...}` or `{"t
 
 [`sinum/`](sinum) turns each appliance into a custom device on a Sinum central unit that runs smartthings-ws itself:
 
-- [`appliance.lua`](sinum/appliance.lua) is the script of every device. It receives the state over the WebSocket (`ws://127.0.0.1:8124/ws`), sends commands over it, and reads the state over HTTP once after each rebuild of the interpreter. A command the appliance refuses shows a toast and puts the control back. Alarms, a waiting firmware update, low detergent, a due drum clean, descaling and the self check errors appear as warnings of the device. Programme settings can be changed only while no programme runs.
+- [`appliance.lua`](sinum/appliance.lua) is the script of every device. It receives the state over the WebSocket (`ws://127.0.0.1:8124/ws`), sends commands over it, and reads the state over HTTP once after each rebuild of the interpreter. The state is kept in the script's `utils.c`, so a rebuilt device shows it at once, and shared with other scripts in `utils.C.smartthings_ws.<name>` while the device is online, e.g. `utils.C.smartthings_ws.fridge.door_open`. Laundry programmes are shown by name for the course tables of these appliances. An oven that declares startable modes gets a remote start: mode, temperature, time and Start, enabled while Remote Control is on. A command the appliance refuses shows a toast and puts the control back. Alarms, a waiting firmware update, low detergent, a due drum clean, descaling and the self check errors appear as warnings of the device. Programme settings can be changed only while no programme runs.
 - [`deploy.py`](sinum/deploy.py) builds the elements, the tile and the details dialog for each kind of appliance and creates the devices through the hub's REST API, or updates the ones it created before (recognised by their integration UID `smartthings-ws:<name>`). It reads the appliances from smartthings-ws first: the setting lists offer the values each appliance reports, and an appliance that has not been read is skipped. Run it again when an appliance starts offering other values:
 
 ```bash
@@ -194,7 +196,7 @@ SINUM_TOKEN=<API token> .venv/bin/python -m sinum.deploy --hub http://192.168.50
 
 `--only fridge washer` limits it to some appliances, `--dry-run` reports what it would do. The API does not set the room of a device; assign it in the Sinum app.
 
-Scenes and automations control the devices with commands: `virtual[ID]:call("start")`, `"pause"`, `"stop"`, `"power_on"`, `"power_off"`, `"set_fridge_target"` and `"set_freezer_target"` with a number, `"set_rapid_cooling"`, `"set_rapid_freezing"`, `"set_sound"` and `"set_lamp"` with a boolean, `"set_delay"` with minutes.
+Scenes and automations control the devices with commands: `virtual[ID]:call("start")`, `"pause"`, `"stop"`, `"power_on"`, `"power_off"`, `"set_fridge_target"` and `"set_freezer_target"` with a number, `"set_rapid_cooling"`, `"set_rapid_freezing"`, `"set_sound"` and `"set_lamp"` with a boolean, `"set_delay"` with minutes, and `"cook"` with `{ mode = "UpperConvection", temperature = 180, minutes = 45 }`.
 
 The Lua interpreter of the hub has no `select`; [`.stylua.toml`](.stylua.toml) formats the script (`stylua sinum/appliance.lua`), and `luac5.4 -p sinum/appliance.lua` checks its syntax.
 

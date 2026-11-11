@@ -7,9 +7,9 @@ the appliance's state are left out, so an empty plan means nothing to change.
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from smartthings_ws.connection import Resources
+from smartthings_ws.connection import DEVICE_COLLECTION, Resources
 from smartthings_ws.errors import InvalidCommand
-from smartthings_ws.models import ApplianceUpdate, ApplianceView, Kind, MachineState
+from smartthings_ws.models import ApplianceUpdate, ApplianceView, CookStart, Kind, MachineState
 from smartthings_ws.state import (
     AI_LEVEL,
     BUZZER,
@@ -38,7 +38,8 @@ class Write:
     """One resource update"""
 
     href: str
-    body: dict[str, Any]
+    # A representation, or a list of them for a write to a collection.
+    body: dict[str, Any] | list[dict[str, Any]]
 
 
 def _power(resources: Resources, value: bool) -> Write:
@@ -167,6 +168,46 @@ def _dry_time(view: ApplianceView, value: int) -> Write:
     return _laundry_setting(view, Kind.DRYER, "dryTime", _duration(value))
 
 
+def _cook(view: ApplianceView, cook: CookStart) -> Write:
+    """Start a cook in one write to the device collection.
+
+    Written one resource at a time from idle, the mode, setpoint and cooking
+    time are accepted and then discarded. With Remote Control off the
+    appliance answers 2.04 and silently drops the start, so that is refused
+    here.
+    """
+    mode = next((m for m in view.cook_modes or [] if m.mode == cook.mode), None)
+    if mode is None:
+        offered = ", ".join(m.mode for m in view.cook_modes or []) or "none"
+        raise InvalidCommand(f"this appliance cannot start a cook in {cook.mode}; it offers {offered}")
+    if view.remote_control is not True:
+        raise InvalidCommand("Remote Control is off on the appliance's panel")
+    if view.machine_state is not MachineState.IDLE or view.oven_mode is not None:
+        raise InvalidCommand("the appliance is already cooking")
+
+    temperature = mode.temperature_default if cook.temperature is None else cook.temperature
+    if not mode.temperature_min <= temperature <= mode.temperature_max:
+        raise InvalidCommand(
+            f"{mode.mode} accepts {mode.temperature_min}..{mode.temperature_max} °C, not {temperature}"
+        )
+    if (temperature - mode.temperature_min) % mode.temperature_step:
+        raise InvalidCommand(f"{mode.mode} sets the temperature in steps of {mode.temperature_step} °C")
+    duration = mode.minutes_default if cook.minutes is None else cook.minutes
+    if not mode.minutes_min <= duration <= mode.minutes_max:
+        raise InvalidCommand(f"{mode.mode} cooks {mode.minutes_min}..{mode.minutes_max} minutes, not {duration}")
+
+    setpoint = {DA + "id": "0", DA + "desired": str(temperature), DA + "unit": "Celsius"}
+    return Write(
+        "/" + "/".join(DEVICE_COLLECTION),
+        [
+            {"href": "/devices/0"},
+            {"href": MODE, "rep": {DA + "modes": [mode.mode]}},
+            {"href": TEMPERATURES, "rep": {DA + "items": [setpoint]}},
+            {"href": OPERATIONAL_STATE, "rep": {DA + "operationTime": _duration(duration), DA + "state": "Run"}},
+        ],
+    )
+
+
 def plan_writes(view: ApplianceView, resources: Resources, update: ApplianceUpdate) -> list[Write]:
     """The writes that bring the appliance to the requested state.
 
@@ -212,6 +253,7 @@ def plan_writes(view: ApplianceView, resources: Resources, update: ApplianceUpda
         ),
         (update.delay_finish_minutes, view.delay_finish_minutes, lambda v: _delay(view, v)),
         (update.operation, None, lambda v: _operation(view, resources, v)),
+        (update.cook, None, lambda v: _cook(view, v)),
     ]
 
     writes = []

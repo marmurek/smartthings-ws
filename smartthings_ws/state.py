@@ -5,11 +5,12 @@ Values come from Samsung's vendor resources (`/.../vs/0`, keys prefixed
 standard OCF resources where those are the only source.
 """
 
+import json
 import re
 from typing import Any, Optional
 
 from smartthings_ws.connection import Resources
-from smartthings_ws.models import ApplianceView, Kind, MachineState
+from smartthings_ws.models import ApplianceView, CookMode, Kind, MachineState
 
 DA = "x.com.samsung.da."
 
@@ -24,6 +25,8 @@ COOLER_DOOR = "/door/cooler/0"
 FREEZER_DOOR = "/door/freezer/0"
 WASHER = "/washer/vs/0"
 COURSE = "/course/vs/0"
+# The SmartThings spelling of the selected programme, naming its code table.
+COURSE_TABLES = ("/st/washercourse/vs/0", "/st/dryercourse/vs/0")
 REFRIGERATION = "/refrigeration/vs/0"
 TEMPERATURES = "/temperatures/vs/0"
 OVEN = "/oven/vs/0"
@@ -37,6 +40,9 @@ AI_LEVEL = "/energy/ailevel/vs/0"
 SELF_CHECK = "/selfcheck/vs/0"
 DOOR_ALERT = "/settings/sound/alert/door/vs/0"
 STATUS_LOCK = "/status/lock/vs/0"
+
+# The modeSpec control of a mode a remote may start, not only adjust.
+START_CONTROL = "Start&Setting"
 
 # The firmware reports this when it has no power reading.
 NO_POWER_READING = -500
@@ -83,6 +89,27 @@ def minutes(value: Any) -> Optional[int]:
         return None
     hours, mins, _seconds = (int(g) for g in match.groups())
     return hours * 60 + mins
+
+
+def _option_name(entry: Any) -> Any:
+    """What an options entry sets: `Course` of `Course_2B`"""
+    return entry.split("_", 1)[0] if isinstance(entry, str) else entry
+
+
+def merge_notification(held: dict[str, Any], rep: dict[str, Any]) -> dict[str, Any]:
+    """A representation with a notification applied.
+
+    A notification carries only the keys that changed, and of an options list
+    only the entries that changed, e.g. the dryer's `/course/vs/0` notifies
+    `["Course_2B"]` alone. Each entry replaces the held one of the same name.
+    """
+    merged = {**held, **rep}
+    old, new = held.get(DA + "options"), rep.get(DA + "options")
+    if isinstance(old, list) and isinstance(new, list):
+        changed = {_option_name(e): e for e in new}
+        kept = [changed.pop(_option_name(e), e) for e in old]
+        merged[DA + "options"] = kept + list(changed.values())
+    return merged
 
 
 def option(resources: Resources, href: str, prefix: str) -> Optional[str]:
@@ -293,10 +320,16 @@ def _common(resources: Resources, kind: Kind) -> dict[str, Any]:
     }
 
 
+def _course_table(resources: Resources) -> Optional[str]:
+    """The table the programme codes belong to; the same code names another programme in another table"""
+    return next((t for t in (text(vendor(resources, href, "st.courseTable")) for href in COURSE_TABLES) if t), None)
+
+
 def _laundry(resources: Resources) -> dict[str, Any]:
     """The fields washers and dryers share"""
     return {
         "course": option(resources, COURSE, "Course_"),
+        "course_table": _course_table(resources),
         "delay_finish_minutes": minutes(vendor(resources, OPERATIONAL_STATE, "delayEndTime")),
         "drum_clean_due_in": _drum_clean_due_in(resources),
         "drum_clean_last": _drum_clean_last(resources),
@@ -381,6 +414,44 @@ def _item_range(item: Optional[dict[str, Any]]) -> Optional[list[float]]:
     return None if low is None or high is None else [low, high]
 
 
+def _cook_mode(entry: Any) -> Optional[CookMode]:
+    """One modeSpec entry as a mode a cook can start in, None if it cannot or declares no limits"""
+    if not isinstance(entry, dict) or entry.get("control") != START_CONTROL or not isinstance(entry.get("mode"), str):
+        return None
+    limits = {
+        "temperature_min": as_int(entry.get("tempMinC")),
+        "temperature_max": as_int(entry.get("tempMaxC")),
+        "temperature_default": as_int(entry.get("tempDefaultC")),
+        "temperature_step": as_int(entry.get("tempIntervalC")) or 1,
+        "minutes_min": minutes(entry.get("timeMin")),
+        "minutes_max": minutes(entry.get("timeMax")),
+        "minutes_default": minutes(entry.get("timeDefault")),
+    }
+    if None in limits.values():
+        return None
+    return CookMode(mode=entry["mode"], **limits)
+
+
+def _cook_modes(resources: Resources) -> Optional[list[CookMode]]:
+    """The modes a cook can be started in now.
+
+    modeSpec, a JSON string, declares per mode whether a remote may start it
+    and within which limits. It lists the modes of every cavity layout, so
+    only the ones in supportedModes, which follows the divider, are offered.
+    """
+    raw = vendor(resources, MODE, "modeSpec")
+    oven = temperature_item(resources, "Temperature")
+    if not isinstance(raw, str) or oven is None or oven.get(DA + "unit") != "Celsius":
+        return None
+    try:
+        spec = json.loads(raw)
+    except ValueError:
+        return None
+    live = _string_list(vendor(resources, MODE, "supportedModes")) or []
+    modes = [_cook_mode(entry) for entry in spec] if isinstance(spec, list) else []
+    return [m for m in modes if m is not None and m.mode in live]
+
+
 def _cooking(resources: Resources) -> dict[str, Any]:
     """An oven's or microwave's cooking state, timer and steam system"""
     oven = temperature_item(resources, "Temperature")
@@ -390,6 +461,7 @@ def _cooking(resources: Resources) -> dict[str, Any]:
         "oven_mode": _oven_mode(resources),
         "supported_modes": None if supported is None else [m for m in supported if m != "NoOperation"],
         "default_mode": text(vendor(resources, MODE, "defaultMode")),
+        "cook_modes": _cook_modes(resources),
         "oven_temperature": as_int(oven.get(DA + "current")) if oven else None,
         "oven_target": as_int(oven.get(DA + "desired")) if oven else None,
         "elapsed_minutes": minutes(vendor(resources, OPERATIONAL_STATE, "operationTime")),

@@ -5,7 +5,7 @@ from typing import Any, Optional
 import pytest
 
 from smartthings_ws.models import Kind, MachineState
-from smartthings_ws.state import detect_kind, minutes, read_view
+from smartthings_ws.state import detect_kind, merge_notification, minutes, read_view
 from tests.fixtures import DA, resources
 
 
@@ -313,3 +313,74 @@ def test_drain_required(drain: str, expected: bool) -> None:
 def test_fridge_door_open(changes: dict[str, Any], expected: Optional[bool]) -> None:
     """Test that a fridge reports a door open when its cooler or freezer door is open"""
     assert read_view("fridge", "10.0.0.1", resources("fridge", **changes)).door_open is expected
+
+
+def test_cook_modes() -> None:
+    """Test that only the modes declared startable and offered by the current cavity layout are reported"""
+    modes = read_view("oven", "10.0.0.1", resources("oven")).cook_modes
+    assert modes is not None
+    assert [m.model_dump() for m in modes] == [
+        {
+            "mode": "UpperConvection",
+            "temperature_min": 40,
+            "temperature_max": 250,
+            "temperature_default": 160,
+            "temperature_step": 5,
+            "minutes_min": 1,
+            "minutes_max": 1439,
+            "minutes_default": 60,
+        },
+        {
+            "mode": "UpperLargeGrill",
+            "temperature_min": 40,
+            "temperature_max": 250,
+            "temperature_default": 220,
+            "temperature_step": 5,
+            "minutes_min": 1,
+            "minutes_max": 1439,
+            "minutes_default": 60,
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kind", "changes"),
+    [
+        ("microwave", {}),
+        ("oven", {"mode_vs_0": {DA + "modeSpec": "not json"}}),
+        (
+            "oven",
+            {
+                "temperatures_vs_0": {
+                    DA + "items": [{DA + "id": "0", DA + "description": "Temperature", DA + "unit": "Fahrenheit"}]
+                }
+            },
+        ),
+    ],
+)
+def test_cook_modes_unknown(kind: str, changes: dict[str, Any]) -> None:
+    """Test that no cook modes are reported without a readable modeSpec in Celsius"""
+    assert read_view(kind, "10.0.0.1", resources(kind, **changes)).cook_modes is None
+
+
+@pytest.mark.parametrize(("kind", "table"), [("washer", "Table_02"), ("dryer", "Table_03")])
+def test_course_table(kind: str, table: str) -> None:
+    """Test that the table naming the laundry programme codes is reported"""
+    assert read_view(kind, "10.0.0.1", resources(kind)).course_table == table
+
+
+@pytest.mark.parametrize(
+    ("held", "rep", "expected"),
+    [
+        (
+            {DA + "options": ["Course_16", "WashingTimes_180", "GeoFenceAlarm"], "other": 1},
+            {DA + "options": ["Course_2B", "QuickDrive_On"]},
+            {DA + "options": ["Course_2B", "WashingTimes_180", "GeoFenceAlarm", "QuickDrive_On"], "other": 1},
+        ),
+        ({DA + "options": ["Course_16"]}, {"other": 2}, {DA + "options": ["Course_16"], "other": 2}),
+        ({}, {DA + "options": ["Course_2B"]}, {DA + "options": ["Course_2B"]}),
+    ],
+)
+def test_merge_notification(held: dict[str, Any], rep: dict[str, Any], expected: dict[str, Any]) -> None:
+    """Test that a notification replaces the keys and option entries it carries and keeps the rest"""
+    assert merge_notification(held, rep) == expected

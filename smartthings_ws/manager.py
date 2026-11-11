@@ -20,7 +20,7 @@ from smartthings_ws.config import Settings
 from smartthings_ws.connection import ApplianceConnection, Resources, SessionFactory
 from smartthings_ws.errors import ApplianceNotFound, ApplianceUnavailable
 from smartthings_ws.models import ApplianceUpdate, ApplianceView
-from smartthings_ws.state import read_view
+from smartthings_ws.state import merge_notification, read_view
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ class ApplianceManager:
             logger.info("%s is answering again after %d failed reads", name, tracked.missed_reads)
         tracked.missed_reads = 0
         for href, rep in notified.items():
-            resources[href] = {**resources.get(href, {}), **rep}
+            resources[href] = merge_notification(resources.get(href, {}), rep)
         tracked.resources = resources
         await self._publish(tracked, read_view(name, tracked.view.host, resources))
         view = tracked.view
@@ -206,12 +206,11 @@ class ApplianceManager:
         """Apply a notification and report what it changed, on the event loop"""
         tracked = self.appliances[name]
         for notified in tracked.notifications.during_reads:
-            notified[href] = {**notified.get(href, {}), **rep}
+            notified[href] = merge_notification(notified.get(href, {}), rep)
         if tracked.resources is None:
             return
 
-        # A notification may carry only the keys that changed.
-        tracked.resources[href] = {**tracked.resources.get(href, {}), **rep}
+        tracked.resources[href] = merge_notification(tracked.resources.get(href, {}), rep)
         # Availability follows the reads; a notification does not restore it.
         if not tracked.view.available:
             return

@@ -179,3 +179,39 @@ def test_setting_without_a_list_is_left_out() -> None:
     names = {e["name"] for e in device_definition(APPLIANCES[2], LUA, state)["elements"]}
 
     assert "spin_level" not in names and "spin_level_label" not in names and "rinse_cycles" in names
+
+
+def test_oven_remote_start_follows_the_default_mode() -> None:
+    """Test that the remote start offers the oven's startable modes with the default mode's limits"""
+    elements = {e["name"]: e for e in definition_of(APPLIANCES[3])["elements"]}
+
+    mode, slider, minutes = elements["cook_mode"], elements["cook_temperature"], elements["cook_time"]
+    assert [o["value"] for o in mode["options"]] == ["UpperConvection", "UpperLargeGrill"]
+    assert mode["value"] == "UpperConvection" and mode["options"][0]["label"] == "Termoobieg"
+    assert (slider["minimum"], slider["maximum"], slider["step"], slider["value"]) == (40, 250, 5, 160)
+    assert minutes["value"] == "60" and "cook_start" in elements
+
+
+def test_remote_start_needs_startable_modes() -> None:
+    """Test that an appliance without startable modes gets no remote start section"""
+    definition = definition_of(APPLIANCES[0])
+    titles = [block["text"] for block in definition["dialog"]["content"] if block["type"] == "section"]
+
+    assert "Zdalny start" not in titles and "cook_mode" not in {e["name"] for e in definition["elements"]}
+
+
+@pytest.mark.parametrize(
+    ("appliance", "names"),
+    [
+        (APPLIANCES[2], {"summary", "progress", "program", "power", "start", "pause", "stop", "remote"}),
+        (APPLIANCES[3], {"summary", "progress", "temperature", "timing", "power", "stop", "remote"}),
+        (APPLIANCES[1], {"summary", "doors"}),
+    ],
+    ids=lambda v: v.name if isinstance(v, deploy.Appliance) else None,
+)
+def test_widget_elements(appliance: deploy.Appliance, names: set[str]) -> None:
+    """Test that the tile shows the state, what Start runs and why the controls may be disabled"""
+    definition = definition_of(appliance)
+    by_uuid = {e["uuid"]: e["name"] for e in definition["elements"]}
+
+    assert {by_uuid[u] for u in elements_in(definition["widget"])} - {"power_label"} == names

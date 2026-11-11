@@ -1,12 +1,17 @@
 -- Sinum custom device for one appliance served by smartthings-ws.
 --
 -- State arrives over the WebSocket component `ws`: the full list on connect,
--- then change reports. Commands go out over the same socket. The HTTP client
--- component `api` reads the state once when the script has none, which
--- happens after every rebuild of the interpreter while the socket stays
--- connected. The variable component `appliance` holds the name the
--- appliance has in smartthings-ws; `warnings` holds the warnings whose text
--- depends on the state, so they can be removed after a rebuild or a restart.
+-- then change reports. Commands go out over the same socket. The state is
+-- kept in utils.c, the script's own storage, which survives a rebuild of the
+-- interpreter, so the device shows it at once. Reports sent during a rebuild
+-- are lost and a rebuild while the socket stays connected delivers no list,
+-- so the HTTP client component `api` reads the state once after each rebuild.
+-- The variable component `appliance` holds the name the appliance has in
+-- smartthings-ws; `warnings` holds the warnings whose text depends on the
+-- state, so they can be removed after a restart as well.
+--
+-- Other scripts read the state of every appliance whose device is online
+-- from the global storage, e.g. utils.C.smartthings_ws.fridge.door_open.
 --
 -- Every device uses this script; the elements differ by appliance kind, so
 -- each element is looked up once and skipped when the device does not have it.
@@ -24,7 +29,6 @@ local ELEMENTS <const> = {
   "steam",
   "maintenance",
   "dosing",
-  "modes",
   "fridge_modes",
   "self_check",
   "power",
@@ -47,9 +51,13 @@ local ELEMENTS <const> = {
   "fast_preheat",
   "energy_saving",
   "door_alarm",
+  "cook_mode",
+  "cook_temperature",
+  "cook_time",
+  "cook_start",
 }
 
--- Seconds between reads of the state over HTTP while the script has none.
+-- Seconds between reads of the state over HTTP until one succeeds after a rebuild.
 local FETCH_RETRY <const> = 30
 
 local JOBS <const> = {
@@ -60,6 +68,7 @@ local JOBS <const> = {
   AIDrying = "Suszenie AI",
   Drying = "Suszenie",
   Cooling = "Schładzanie",
+  InternalCare = "Pielęgnacja bębna",
   Finish = "Zakończono",
 }
 
@@ -69,11 +78,81 @@ local MODES <const> = {
   UpperTopConvection = "Termoobieg z górną grzałką",
   UpperLargeGrill = "Grill",
   UpperAutocook = "Program automatyczny",
+  Convection = "Termoobieg",
+  TopHeatPluseConvection = "Termoobieg z górną grzałką",
+  BottomHeatPluseConvection = "Termoobieg z dolną grzałką",
+  Conventional = "Grzanie góra-dół",
+  LargeGrill = "Duży grill",
+  SmallGrill = "Mały grill",
+  FanGrill = "Grill z termoobiegiem",
+  Bottom = "Grzałka dolna",
+  EcoConvection = "Termoobieg Eco",
+  ProRoasting = "Pro-Roasting",
+  PlateWarm = "Podgrzewanie talerzy",
+  Defrost = "Rozmrażanie",
+  AirSousvide = "Air Sous Vide",
+  SteamConvection = "Termoobieg z parą",
+  SteamTopConvection = "Termoobieg z górną grzałką i parą",
+  SteamBottomConvection = "Termoobieg z dolną grzałką i parą",
   MicroWave = "Mikrofale",
   Autocook = "Program automatyczny",
   KeepWarm = "Podtrzymanie ciepła",
   Deodorization = "Odświeżanie",
   SteamClean = "Czyszczenie parą",
+}
+
+-- Laundry programme names by course table and code, for the programmes the
+-- washer and dryer offer. The same code names another programme in another
+-- table. Names from the LocalThings translations (MIT License, Copyright (c)
+-- 2026 Marc Billow, https://github.com/mbillow/localthings).
+local COURSES <const> = {
+  Table_02 = {
+    ["1B"] = "Bawełna",
+    ["1C"] = "Eco 40-60",
+    ["1D"] = "Super szybki",
+    ["1E"] = "Szybkie pranie 15'",
+    ["20"] = "Higieniczna para",
+    ["21"] = "Tkaniny kolorowe",
+    ["22"] = "Wełna",
+    ["23"] = "Odzież wierzchnia",
+    ["24"] = "Pościel",
+    ["25"] = "Syntetyki",
+    ["26"] = "Delikatne",
+    ["27"] = "Płukanie + wirowanie",
+    ["28"] = "Odpompowanie/wirowanie",
+    ["29"] = "Czyszczenie bębna+",
+    ["2A"] = "Jeansy",
+    ["2B"] = "Pranie optymalne",
+    ["2D"] = "Ciche pranie",
+    ["2E"] = "Dziecięce",
+    ["2F"] = "Odzież sportowa",
+    ["30"] = "Pochmurny dzień",
+    ["32"] = "Koszule",
+    ["33"] = "Ręczniki",
+    ["8F"] = "Intensywne pranie na zimno",
+    ["96"] = "Mniej włókien",
+  },
+  Table_03 = {
+    ["16"] = "Bawełna",
+    ["17"] = "Super szybki",
+    ["18"] = "Syntetyki",
+    ["19"] = "Delikatne",
+    ["1A"] = "Wełna",
+    ["1B"] = "Pościel",
+    ["1C"] = "Koszule",
+    ["1D"] = "Ręczniki",
+    ["1E"] = "Odzież wierzchnia",
+    ["20"] = "Do prasowania",
+    ["21"] = "Higiena",
+    ["22"] = "Ciche suszenie",
+    ["23"] = "Suszenie 35'",
+    ["24"] = "Zimne powietrze",
+    ["25"] = "Ciepłe powietrze",
+    ["27"] = "Czas suszenia",
+    ["29"] = "Suszenie AI",
+    ["2B"] = "Osuszanie bębna",
+    ["4C"] = "Odświeżanie",
+  },
 }
 
 local DRY_LEVELS <const> = { Damp = "wilgotne", Less = "lekkie", Normal = "normalne", More = "mocne" }
@@ -110,7 +189,7 @@ local WARNINGS <const> = {
   {
     "Zalecane czyszczenie bębna",
     function(st)
-      return st.kind == "washer" and st.drum_clean_due_in == 0
+      return st.drum_clean_due_in == 0
     end,
   },
   {
@@ -151,9 +230,17 @@ function CustomDevice:onRebuildInstance()
       self.elements[name] = element
     end
   end
-  self.state = nil
+  self.state = utils.c.state
+  -- Whether the state was received since the rebuild.
+  self.current = false
   self.fetchedAt = nil
-  self.messageId = 0
+end
+
+function CustomDevice:setState(st)
+  self.state = st
+  self.current = true
+  utils.c.state = st
+  self:render()
 end
 
 function CustomDevice:onInit(reason)
@@ -177,7 +264,7 @@ function CustomDevice:onEvent(event)
     self:onStateResponse(status, body)
   end)
 
-  if self.state == nil and self.ws:isConnected() then
+  if not self.current and self.ws:isConnected() then
     self:fetchState()
   end
 
@@ -206,8 +293,7 @@ function CustomDevice:onStateResponse(status, body)
   end
   local ok, data = pcall(JSON.decode, JSON, body)
   if ok and type(data) == "table" then
-    self.state = data
-    self:render()
+    self:setState(data)
   end
 end
 
@@ -220,8 +306,7 @@ function CustomDevice:onSocketMessage(payload)
   if message.type == "list" and type(message.data) == "table" then
     for _, appliance in pairs(message.data) do
       if type(appliance) == "table" and appliance.name == self.name then
-        self.state = appliance
-        self:render()
+        self:setState(appliance)
       end
     end
   elseif message.name ~= self.name then
@@ -264,8 +349,8 @@ function CustomDevice:send(data)
     self:render()
     return
   end
-  self.messageId = self.messageId + 1
-  self.ws:send(JSON:encode({ type = "update", name = self.name, message_id = self.messageId, data = data }))
+  utils.c.messageId = (utils.c.messageId or 0) + 1
+  self.ws:send(JSON:encode({ type = "update", name = self.name, message_id = utils.c.messageId, data = data }))
 end
 
 local function rounded(value)
@@ -353,6 +438,61 @@ function CustomDevice:onDoorAlarm(value)
   self:send({ door_alarm_volume = rounded(value) })
 end
 
+-- The cook the remote start sends, kept in utils.c until it is sent. A mode
+-- the oven does not offer now is replaced by the default one.
+function CustomDevice:cookChoice(st)
+  local modes = {}
+  for _, mode in ipairs(type(st.cook_modes) == "table" and st.cook_modes or {}) do
+    modes[mode.mode] = mode
+  end
+  local choice = utils.c.cook
+  if type(choice) ~= "table" or modes[choice.mode] == nil then
+    local spec = modes[st.default_mode] or (type(st.cook_modes) == "table" and st.cook_modes[1]) or nil
+    if spec == nil then
+      return nil, nil
+    end
+    choice = { mode = spec.mode, temperature = spec.temperature_default, minutes = spec.minutes_default }
+    utils.c.cook = choice
+  end
+  return choice, modes[choice.mode]
+end
+
+function CustomDevice:onCookMode(value)
+  local st = self.state or {}
+  for _, mode in ipairs(type(st.cook_modes) == "table" and st.cook_modes or {}) do
+    if mode.mode == value then
+      utils.c.cook = { mode = value, temperature = mode.temperature_default, minutes = mode.minutes_default }
+    end
+  end
+  self:render()
+end
+
+function CustomDevice:onCookTemperature(value)
+  local choice, spec = self:cookChoice(self.state or {})
+  if choice ~= nil then
+    local step = spec.temperature_step
+    choice.temperature = spec.temperature_min + rounded((tonumber(value) - spec.temperature_min) / step) * step
+  end
+  self:render()
+end
+
+function CustomDevice:onCookTime(value)
+  local choice = self:cookChoice(self.state or {})
+  if choice ~= nil then
+    choice.minutes = rounded(value)
+  end
+  self:render()
+end
+
+function CustomDevice:onCookStart()
+  local choice = self:cookChoice(self.state or {})
+  if choice == nil then
+    toast:failure():text("Urządzenie nie oferuje zdalnego startu"):show()
+    return
+  end
+  self:send({ cook = { mode = choice.mode, temperature = choice.temperature, minutes = choice.minutes } })
+end
+
 -- Commands for scenes and automations, e.g. virtual[ID]:call("start").
 function CustomDevice:onCommand(command, arg)
   if command == "start" or command == "pause" or command == "stop" then
@@ -373,6 +513,9 @@ function CustomDevice:onCommand(command, arg)
     self:send({ lamp = arg })
   elseif command == "set_delay" and type(arg) == "number" then
     self:send({ delay_finish_minutes = rounded(arg) })
+  elseif command == "cook" and type(arg) == "table" and type(arg.mode) == "string" then
+    -- e.g. virtual[ID]:call("cook", { mode = "UpperConvection", temperature = 180, minutes = 45 })
+    self:send({ cook = { mode = arg.mode, temperature = arg.temperature, minutes = arg.minutes } })
   else
     utils:printf("Unknown command %s", tostring(command))
   end
@@ -473,17 +616,25 @@ function CustomDevice:summary(st)
   return ready
 end
 
+function CustomDevice:courseName(st)
+  if st.course == nil then
+    return nil
+  end
+  local names = COURSES[st.course_table]
+  return names and names[string.upper(st.course)] or ("Program " .. st.course)
+end
+
 function CustomDevice:program(st)
   if st.kind == "washer" then
     local water = WATER_TEMPERATURES[st.water_temperature]
       or (st.water_temperature and st.water_temperature ~= "None" and st.water_temperature .. "°C")
     local spin = SPIN_LEVELS[st.spin_level] or (st.spin_level and st.spin_level .. " obr/min")
     local rinses = type(st.rinse_cycles) == "number" and string.format("płukania: %d", st.rinse_cycles) or nil
-    return joined(st.course and ("Program " .. st.course), water, spin, rinses)
+    return joined(self:courseName(st), water, spin, rinses)
   elseif st.kind == "dryer" then
     local level = DRY_LEVELS[st.dry_level] and ("suszenie " .. DRY_LEVELS[st.dry_level]) or nil
     local time = type(st.dry_time_minutes) == "number" and st.dry_time_minutes > 0 and duration(st.dry_time_minutes)
-    return joined(st.course and ("Program " .. st.course), level, time, st.wrinkle_prevent and "antyzagniecenia")
+    return joined(self:courseName(st), level, time, st.wrinkle_prevent and "antyzagniecenia")
   end
   return ""
 end
@@ -556,8 +707,9 @@ function CustomDevice:maintenance(st)
     return ""
   end
   local due = nil
-  if st.kind == "washer" and type(st.drum_clean_due_in) == "number" then
-    due = st.drum_clean_due_in > 0 and string.format("Czyszczenie bębna za %d prań", st.drum_clean_due_in)
+  if type(st.drum_clean_due_in) == "number" then
+    local cycles = st.kind == "washer" and "prań" or "cykli"
+    due = st.drum_clean_due_in > 0 and string.format("Czyszczenie bębna za %d %s", st.drum_clean_due_in, cycles)
       or "Czyszczenie bębna zalecane"
   end
   local last = date(st.drum_clean_last)
@@ -572,17 +724,6 @@ function CustomDevice:dosing(st)
     st.detergent_dose and string.format("Dozowanie detergentu: %d", st.detergent_dose),
     st.softener_dose and string.format("płynu: %d", st.softener_dose)
   )
-end
-
-function CustomDevice:modes(st)
-  if type(st.supported_modes) ~= "table" then
-    return ""
-  end
-  local names = {}
-  for _, mode in ipairs(st.supported_modes) do
-    names[#names + 1] = MODES[mode] or mode
-  end
-  return "Tryby: " .. table.concat(names, ", ")
 end
 
 function CustomDevice:fridgeModes(st)
@@ -605,7 +746,16 @@ function CustomDevice:selfCheck(st)
   )
 end
 
+local function startable(st)
+  return type(st.cook_modes) == "table" and #st.cook_modes > 0
+end
+
+-- The panel setting matters while the appliance is on, and for an oven that
+-- can be started remotely also while it is off.
 function CustomDevice:remote(st)
+  if st.power == false and not startable(st) then
+    return ""
+  end
   if st.remote_control == false then
     return "Zdalne sterowanie wyłączone na panelu urządzenia"
   elseif st.remote_control == true then
@@ -733,6 +883,12 @@ local OPTION_LABELS <const> = {
   delay = function(v)
     return tonumber(v) and delayLabel(tonumber(v)) or v
   end,
+  cook_mode = function(v)
+    return MODES[v] or v
+  end,
+  cook_time = function(v)
+    return tonumber(v) and duration(tonumber(v)) or v
+  end,
   energy_saving = function(v)
     return "Poziom " .. v
   end,
@@ -801,7 +957,6 @@ function CustomDevice:render()
     self:setText("steam", self:steam(st))
     self:setText("maintenance", self:maintenance(st))
     self:setText("dosing", self:dosing(st))
-    self:setText("modes", self:modes(st))
     self:setText("fridge_modes", self:fridgeModes(st))
     self:setText("self_check", self:selfCheck(st))
     self:setRange("fridge_target", st.fridge_range)
@@ -838,4 +993,39 @@ function CustomDevice:render()
   self:setControl("dry_time", idle, st.dry_time_minutes)
   self:setControl("wrinkle_prevent", idle, st.wrinkle_prevent)
   self:setControl("delay", idle, st.delay_finish_minutes)
+  self:renderCook(st, online)
+  self:share(online)
+end
+
+function CustomDevice:renderCook(st, online)
+  local element = self.elements.cook_mode
+  if element == nil then
+    return
+  end
+  -- The modes on offer follow the oven's divider.
+  for _, mode in ipairs(type(st.cook_modes) == "table" and st.cook_modes or {}) do
+    pcall(self.addMissingOption, self, "cook_mode", element, mode.mode)
+  end
+  local choice, spec = self:cookChoice(st)
+  local ready = online
+    and spec ~= nil
+    and st.remote_control == true
+    and st.machine_state == "idle"
+    and st.oven_mode == nil
+  self:setControl("cook_mode", online and spec ~= nil, choice and choice.mode)
+  if spec ~= nil then
+    self:setRange("cook_temperature", { spec.temperature_min, spec.temperature_max })
+  end
+  self:setControl("cook_temperature", ready, choice and choice.temperature)
+  self:setControl("cook_time", ready, choice and choice.minutes)
+  self:setControl("cook_start", ready)
+end
+
+function CustomDevice:share(online)
+  if utils.C == nil or self.name == nil then
+    return
+  end
+  local shared = utils.C.smartthings_ws or {}
+  shared[self.name] = online and self.state or nil
+  utils.C.smartthings_ws = shared
 end

@@ -170,7 +170,7 @@ class ApplianceConnection:
         except (cbor2.CBORDecodeError, ValueError) as e:
             raise ApplianceUnavailable(f"{self.appliance.name} sent an unreadable state: {e}") from e
 
-    async def write(self, href: str, body: dict[str, Any]) -> None:
+    async def write(self, href: str, body: dict[str, Any] | list[dict[str, Any]]) -> None:
         """Update one resource, raising CommandRejected if the appliance refuses"""
         segments = _segments(href)
         encoded = cbor2.dumps(body)

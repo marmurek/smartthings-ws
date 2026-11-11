@@ -73,6 +73,34 @@ APPLIANCES = (
 DELAY_HOURS = range(1, 25)
 
 
+# Cooking times offered for a remote oven start, in minutes.
+COOK_MINUTES = (5, 10, 15, 20, 25, 30, 40, 45, 50, 60, 75, 90, 105, 120, 150, 180, 240, 300)
+
+COOK_MODE_LABELS = {
+    "UpperAirFry": "Air Fry",
+    "UpperConvection": "Termoobieg",
+    "UpperTopConvection": "Termoobieg z górną grzałką",
+    "UpperLargeGrill": "Grill",
+    "Convection": "Termoobieg",
+    "TopHeatPluseConvection": "Termoobieg z górną grzałką",
+    "BottomHeatPluseConvection": "Termoobieg z dolną grzałką",
+    "Conventional": "Grzanie góra-dół",
+    "LargeGrill": "Duży grill",
+    "SmallGrill": "Mały grill",
+    "FanGrill": "Grill z termoobiegiem",
+    "Bottom": "Grzałka dolna",
+    "EcoConvection": "Termoobieg Eco",
+    "ProRoasting": "Pro-Roasting",
+    "PlateWarm": "Podgrzewanie talerzy",
+    "KeepWarm": "Podtrzymanie ciepła",
+    "Defrost": "Rozmrażanie",
+    "AirSousvide": "Air Sous Vide",
+    "SteamConvection": "Termoobieg z parą",
+    "SteamTopConvection": "Termoobieg z górną grzałką i parą",
+    "SteamBottomConvection": "Termoobieg z dolną grzałką i parą",
+}
+
+
 def _water_temperature_label(value: str) -> str:
     return "Zimna woda" if value == "Cold" else f"{value}°C"
 
@@ -153,15 +181,15 @@ class Builder:
         """A button"""
         self._add("button", name, text=text, text_id=0, icon=icon, on_press=on_press)
 
-    def slider(self, name: str, label: str, *, span: tuple[float, float], value: float, on_change: str) -> None:
-        """A slider with a label and a °C unit"""
+    def slider(self, name: str, label: str, *, span: tuple[float, float, float], value: float, on_change: str) -> None:
+        """A slider with a label and a °C unit; `span` is the minimum, maximum and step"""
         self._add(
             "slider",
             name,
             minimum=span[0],
             maximum=span[1],
             value=min(max(value, span[0]), span[1]),
-            step=1,
+            step=span[2],
             on_change=on_change,
             label_text=label,
             label_text_id=0,
@@ -315,7 +343,17 @@ def _laundry(b: Builder, state: Json) -> tuple[Json, Json]:
     b.text("energy", size="small")
 
     controls: Row = [("start", ["power_label", "power"]), ("end", ["start", "pause", "stop"])]
-    widget = b.layout("widget", [[("start", ["summary"])], [("start", ["progress"])], controls])
+    # Empty texts hide themselves, so the tile grows only while they say something.
+    widget = b.layout(
+        "widget",
+        [
+            [("start", ["summary"])],
+            [("start", ["progress"])],
+            [("start", ["program"])],
+            controls,
+            [("start", ["remote"])],
+        ],
+    )
     dialog = b.layout(
         "dialog",
         [
@@ -366,14 +404,25 @@ def _cooking(b: Builder, state: Json) -> tuple[Json, Json]:
         b.label("fast_preheat", "Szybkie nagrzewanie")
         b.switcher("fast_preheat", "onFastPreheat")
     _sound(b, state)
+    _cook_start(b, state)
     b.text("remote", size="small")
     b.text("doors", size="small")
     b.text("timing", size="small")
     b.text("steam", size="small")
-    b.text("modes", size="small")
 
     controls: Row = [("start", ["power_label", "power"]), ("end", ["stop"])]
-    widget = b.layout("widget", [[("start", ["summary"])], [("start", ["progress"])], controls])
+    # Empty texts hide themselves; the temperature and times show only while cooking.
+    widget = b.layout(
+        "widget",
+        [
+            [("start", ["summary"])],
+            [("start", ["progress"])],
+            [("start", ["temperature"])],
+            [("start", ["timing"])],
+            controls,
+            [("start", ["remote"])],
+        ],
+    )
     dialog = b.layout(
         "dialog",
         [
@@ -382,14 +431,45 @@ def _cooking(b: Builder, state: Json) -> tuple[Json, Json]:
             [("start", ["temperature"])],
             controls,
             [("start", ["remote"])],
-            Section("Ustawienia", [_switch_row("lamp"), _switch_row("fast_preheat"), _switch_row("sound")]),
             Section(
-                "Informacje",
-                [[("start", ["doors"])], [("start", ["timing"])], [("start", ["steam"])], [("start", ["modes"])]],
+                "Zdalny start",
+                [
+                    _combo_row("cook_mode"),
+                    [("start", ["cook_temperature"])],
+                    _combo_row("cook_time"),
+                    [("end", ["cook_start"])],
+                ],
             ),
+            Section("Ustawienia", [_switch_row("lamp"), _switch_row("fast_preheat"), _switch_row("sound")]),
+            Section("Informacje", [[("start", ["doors"])], [("start", ["timing"])], [("start", ["steam"])]]),
         ],
     )
     return widget, dialog
+
+
+def _cook_start(b: Builder, state: Json) -> None:
+    """The mode, temperature and cooking time of a remote start, for an oven that offers one"""
+    modes = state.get("cook_modes") or []
+    if not modes:
+        return
+    mode = next((m for m in modes if m["mode"] == state.get("default_mode")), modes[0])
+    b.combo(
+        "cook_mode",
+        "Tryb",
+        [(COOK_MODE_LABELS.get(m["mode"], m["mode"]), m["mode"]) for m in modes],
+        mode["mode"],
+        "onCookMode",
+    )
+    b.slider(
+        "cook_temperature",
+        "Temperatura",
+        span=(mode["temperature_min"], mode["temperature_max"], mode["temperature_step"]),
+        value=mode["temperature_default"],
+        on_change="onCookTemperature",
+    )
+    minutes = sorted({*COOK_MINUTES, mode["minutes_default"]})
+    b.combo("cook_time", "Czas", _options(minutes, _duration_label), mode["minutes_default"], "onCookTime")
+    b.button("cook_start", "Start", "play", "onCookStart")
 
 
 def _fridge(b: Builder, state: Json) -> tuple[Json, Json]:
@@ -401,14 +481,14 @@ def _fridge(b: Builder, state: Json) -> tuple[Json, Json]:
     b.slider(
         "fridge_target",
         "Chłodziarka",
-        span=(fridge_range[0], fridge_range[1]),
+        span=(fridge_range[0], fridge_range[1], 1),
         value=state.get("fridge_target") or fridge_range[0],
         on_change="onFridgeTarget",
     )
     b.slider(
         "freezer_target",
         "Zamrażarka",
-        span=(freezer_range[0], freezer_range[1]),
+        span=(freezer_range[0], freezer_range[1], 1),
         value=state.get("freezer_target") or freezer_range[1],
         on_change="onFreezerTarget",
     )

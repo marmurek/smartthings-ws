@@ -25,6 +25,19 @@ class MachineState(str, Enum):
     PAUSED = "paused"
 
 
+class CookMode(BaseModel):
+    """A mode an oven can be started in remotely, with the limits it declares"""
+
+    mode: str
+    temperature_min: int = Field(description="°C")
+    temperature_max: int = Field(description="°C")
+    temperature_default: int = Field(description="°C")
+    temperature_step: int = Field(description="°C")
+    minutes_min: int
+    minutes_max: int
+    minutes_default: int
+
+
 class ApplianceView(BaseModel):
     """One appliance's state. A field the appliance does not have is null."""
 
@@ -58,6 +71,7 @@ class ApplianceView(BaseModel):
     )
 
     course: Optional[str] = Field(None, description="Laundry programme code")
+    course_table: Optional[str] = Field(None, description="The table the programme codes belong to, e.g. Table_02")
     water_temperature: Optional[str] = None
     spin_level: Optional[str] = None
     rinse_cycles: Optional[int] = None
@@ -100,6 +114,9 @@ class ApplianceView(BaseModel):
     oven_mode: Optional[str] = None
     supported_modes: Optional[list[str]] = None
     default_mode: Optional[str] = None
+    cook_modes: Optional[list[CookMode]] = Field(
+        None, description="The modes a cook can be started in now; they need Remote Control enabled on the panel"
+    )
     oven_temperature: Optional[int] = None
     oven_target: Optional[int] = None
     elapsed_minutes: Optional[int] = Field(None, description="Cooking time so far")
@@ -119,6 +136,16 @@ class ApplianceView(BaseModel):
 
 
 Operation = Literal["start", "pause", "stop"]
+
+
+class CookStart(BaseModel):
+    """A cook to start; the values left out are the mode's defaults"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: str = Field(description="One of the cook_modes")
+    temperature: Optional[int] = Field(None, description="°C")
+    minutes: Optional[int] = Field(None, description="Cooking time, including the preheat")
 
 
 class ApplianceUpdate(BaseModel):
@@ -146,6 +173,7 @@ class ApplianceUpdate(BaseModel):
     delay_finish_minutes: Optional[int] = Field(None, ge=0, le=24 * 60, description="Whole minutes; 0 clears the delay")
     energy_saving_level: Optional[int] = Field(None, description="One of supported_energy_saving_levels")
     door_alarm_volume: Optional[int] = Field(None, description="One of supported_door_alarm_volumes")
+    cook: Optional[CookStart] = Field(None, description="Start an oven cook")
 
 
 class RootResponse(BaseModel):

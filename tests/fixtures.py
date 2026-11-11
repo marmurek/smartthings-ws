@@ -5,6 +5,7 @@ dryer, an NV7000BS oven and an NQ7000B microwave, with identifiers removed.
 """
 
 import copy
+import json
 from typing import Any
 
 from smartthings_ws.connection import Resources
@@ -126,6 +127,7 @@ _WASHER: Resources = {
         DA + "rinseCycles": "2",
         DA + "supportedRinseCycles": ["0", "1", "2", "3", "4", "5"],
     },
+    "/st/washercourse/vs/0": {DA + "st.washerMode": "Table_02_Course_1C", DA + "st.courseTable": "Table_02"},
 }
 
 _DRYER: Resources = {
@@ -158,6 +160,7 @@ _DRYER: Resources = {
         DA + "supportedDryTime": ["00:00:00", "00:30:00", "01:00:00", "04:00:00"],
         DA + "dryerType": "Electricity",
     },
+    "/st/dryercourse/vs/0": {DA + "st.dryerMode": "Table_03_Course_29", DA + "st.courseTable": "Table_03"},
 }
 
 _COOKING: Resources = {
@@ -186,6 +189,24 @@ _COOKING: Resources = {
     "/power/vs/0": {DA + "power": "Off"},
 }
 
+
+def _mode_spec(mode: str, control: str, temperatures: tuple[str, str, str]) -> dict[str, str]:
+    """One entry of an oven's modeSpec, trimmed to the keys the application reads"""
+    low, high, default = temperatures
+    timed = temperatures[0] != "NotSupported"
+    return {
+        "mode": mode,
+        "control": control,
+        "tempMinC": low,
+        "tempMaxC": high,
+        "tempDefaultC": default,
+        "tempIntervalC": "5",
+        "timeMin": "00:01:00" if timed else "NotSupported",
+        "timeMax": "23:59:00" if timed else "NotSupported",
+        "timeDefault": "01:00:00" if timed else "NotSupported",
+    }
+
+
 _OVEN: Resources = {
     "/mode/vs/0": {
         DA + "supportedModes": ["UpperAirFry", "UpperConvection", "UpperTopConvection", "UpperLargeGrill"],
@@ -209,6 +230,16 @@ _OVEN: Resources = {
             "Sound_On",
         ],
         DA + "defaultMode": "UpperConvection",
+        DA
+        + "modeSpec": json.dumps(
+            [
+                _mode_spec("Convection", "Start&Setting", ("30", "250", "160")),
+                _mode_spec("UpperConvection", "Start&Setting", ("40", "250", "160")),
+                _mode_spec("UpperLargeGrill", "Start&Setting", ("40", "250", "220")),
+                _mode_spec("UpperAutocook", "Setting", ("NotSupported",) * 3),
+                _mode_spec("Drain", "Start&Setting", ("NotSupported",) * 3),
+            ]
+        ),
     },
     "/temperatures/vs/0": {
         DA

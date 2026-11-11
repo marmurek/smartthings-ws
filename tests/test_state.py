@@ -114,6 +114,17 @@ def test_read_view(kind: str, expected: dict[str, Any]) -> None:
         ({"operational_state_vs_0": {DA + "state": 5}}, "machine_state", None),
         ({"operational_state_vs_0": {DA + "progressPercentage": "n/a"}}, "progress", None),
         ({"energy_consumption_vs_0": {DA + "instantaneousPower": "1200"}}, "power_w", 1200.0),
+        (
+            {"operational_state_vs_0": {DA + "operationTime": "00:12:00", DA + "remainingTime": "00:06:00"}},
+            "elapsed_minutes",
+            6,
+        ),
+        (
+            {"operational_state_vs_0": {DA + "operationTime": "00:12:00", DA + "remainingTime": None}},
+            "elapsed_minutes",
+            12,
+        ),
+        ({"operational_state_vs_0": {DA + "operationTime": None}}, "elapsed_minutes", None),
     ],
 )
 def test_read_view_variants(changes: dict[str, Any], field: str, expected: Any) -> None:
@@ -359,7 +370,7 @@ def test_lower_cavity() -> None:
         "lower_target": 200,
         "lower_progress": 54,
         "lower_remaining_minutes": 6,
-        "lower_elapsed_minutes": 12,
+        "lower_elapsed_minutes": 6,
     }
     assert view.machine_state is MachineState.IDLE and view.oven_mode is None
     assert {name: getattr(view, name) for name in expected} == expected

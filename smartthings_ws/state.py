@@ -426,6 +426,17 @@ def _item_range(item: Optional[dict[str, Any]]) -> Optional[list[float]]:
     return None if low is None or high is None else [low, high]
 
 
+def _elapsed_minutes(resources: Resources, href: str) -> Optional[int]:
+    """The cooking time so far.
+
+    `operationTime` is the cooking time set for the cook, not the time it has
+    run: an oven reports 00:12:00 with 6 minutes left at 51%.
+    """
+    total = minutes(vendor(resources, href, "operationTime"))
+    left = minutes(vendor(resources, href, "remainingTime")) or 0
+    return None if total is None else max(total - left, 0)
+
+
 def _cook_mode(entry: Any) -> Optional[CookMode]:
     """One modeSpec entry as a mode a cook can start in, None if it cannot or declares no limits"""
     if not isinstance(entry, dict) or entry.get("control") != START_CONTROL or not isinstance(entry.get("mode"), str):
@@ -496,7 +507,7 @@ def _lower_cavity(resources: Resources) -> dict[str, Any]:
         "lower_target": as_int(oven.get(DA + "desired")) if oven else None,
         "lower_progress": as_int(vendor(resources, LOWER_OPERATIONAL_STATE, "progressPercentage")),
         "lower_remaining_minutes": minutes(vendor(resources, LOWER_OPERATIONAL_STATE, "remainingTime")),
-        "lower_elapsed_minutes": minutes(vendor(resources, LOWER_OPERATIONAL_STATE, "operationTime")),
+        "lower_elapsed_minutes": _elapsed_minutes(resources, LOWER_OPERATIONAL_STATE),
     }
 
 
@@ -511,7 +522,7 @@ def _cooking(resources: Resources) -> dict[str, Any]:
         "cook_modes": _cook_modes(resources),
         "oven_temperature": as_int(oven.get(DA + "current")) if oven else None,
         "oven_target": as_int(oven.get(DA + "desired")) if oven else None,
-        "elapsed_minutes": minutes(vendor(resources, OPERATIONAL_STATE, "operationTime")),
+        "elapsed_minutes": _elapsed_minutes(resources, OPERATIONAL_STATE),
         "lamp": _option_bool(resources, MODE, "UpperLamp_"),
         "fast_preheat": _option_bool(resources, MODE, "fastpreheat_"),
         "timer_set": as_int(option(resources, MODE, "UpperTimerSet_")),

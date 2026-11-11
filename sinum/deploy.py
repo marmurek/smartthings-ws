@@ -98,7 +98,22 @@ COOK_MODE_LABELS = {
     "SteamConvection": "Termoobieg z parą",
     "SteamTopConvection": "Termoobieg z górną grzałką i parą",
     "SteamBottomConvection": "Termoobieg z dolną grzałką i parą",
+    "LowerConvection": "Termoobieg",
+    "LowerBottomConvection": "Termoobieg z dolną grzałką",
+    "LowerBottom": "Grzałka dolna",
+    "LowerSteamConvection": "Termoobieg z parą",
+    "LowerSteamBottomConvection": "Termoobieg z dolną grzałką i parą",
 }
+
+# The cavity a mode of a divided oven runs in, as its name begins.
+CAVITY_LABELS = {"Upper": "Góra", "Lower": "Dół"}
+
+
+def _cook_mode_label(mode: str) -> str:
+    """A mode as the remote start lists it, naming the cavity of a divided oven"""
+    label = COOK_MODE_LABELS.get(mode, mode)
+    cavity = next((name for prefix, name in CAVITY_LABELS.items() if mode.startswith(prefix)), None)
+    return f"{cavity}: {label}" if cavity else label
 
 
 def _water_temperature_label(value: str) -> str:
@@ -390,13 +405,23 @@ def _combo_row(name: str) -> Row:
 
 
 def _cooking(b: Builder, state: Json) -> tuple[Json, Json]:
-    """Oven and microwave: cooking state, power, stop, lamp and the steam system"""
+    """Oven and microwave: cooking state, power, stop, lamp and the steam system.
+
+    A dual-cavity oven also shows the lower cavity, whose texts stay hidden
+    while it does not cook.
+    """
+    dual = state.get("lower_machine_state") is not None
     b.text("summary", "Odczytywanie…", bold=True)
     b.progress("progress")
     b.text("temperature")
     b.label("power", "Zasilanie")
     b.switcher("power", "onPower")
-    b.button("stop", "Stop", "power-button", "onStop")
+    b.button("stop", "Stop górnej" if dual else "Stop", "power-button", "onStop")
+    if dual:
+        b.text("lower_summary", bold=True)
+        b.progress("lower_progress")
+        b.text("lower_temperature")
+        b.button("lower_stop", "Stop dolnej", "power-button", "onLowerStop")
     if state.get("lamp") is not None:
         b.label("lamp", "Oświetlenie")
         b.switcher("lamp", "onLamp")
@@ -410,7 +435,12 @@ def _cooking(b: Builder, state: Json) -> tuple[Json, Json]:
     b.text("timing", size="small")
     b.text("steam", size="small")
 
-    controls: Row = [("start", ["power_label", "power"]), ("end", ["stop"])]
+    controls: Row = [("start", ["power_label", "power"]), ("end", ["stop", "lower_stop"])]
+    lower: list[Block] = [
+        [("start", ["lower_summary"])],
+        [("start", ["lower_progress"])],
+        [("start", ["lower_temperature"])],
+    ]
     # Empty texts hide themselves; the temperature and times show only while cooking.
     widget = b.layout(
         "widget",
@@ -419,6 +449,7 @@ def _cooking(b: Builder, state: Json) -> tuple[Json, Json]:
             [("start", ["progress"])],
             [("start", ["temperature"])],
             [("start", ["timing"])],
+            *lower,
             controls,
             [("start", ["remote"])],
         ],
@@ -429,6 +460,7 @@ def _cooking(b: Builder, state: Json) -> tuple[Json, Json]:
             [("start", ["summary"])],
             [("start", ["progress"])],
             [("start", ["temperature"])],
+            *lower,
             controls,
             [("start", ["remote"])],
             Section(
@@ -456,7 +488,7 @@ def _cook_start(b: Builder, state: Json) -> None:
     b.combo(
         "cook_mode",
         "Tryb",
-        [(COOK_MODE_LABELS.get(m["mode"], m["mode"]), m["mode"]) for m in modes],
+        [(_cook_mode_label(m["mode"]), m["mode"]) for m in modes],
         mode["mode"],
         "onCookMode",
     )

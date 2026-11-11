@@ -197,6 +197,7 @@ def _mode_spec(mode: str, control: str, temperatures: tuple[str, str, str]) -> d
     return {
         "mode": mode,
         "control": control,
+        "cavity": next((c for c in ("Upper", "Lower") if mode.startswith(c)), "Single"),
         "tempMinC": low,
         "tempMaxC": high,
         "tempDefaultC": default,
@@ -238,6 +239,9 @@ _OVEN: Resources = {
                 _mode_spec("UpperLargeGrill", "Start&Setting", ("40", "250", "220")),
                 _mode_spec("UpperAutocook", "Setting", ("NotSupported",) * 3),
                 _mode_spec("Drain", "Start&Setting", ("NotSupported",) * 3),
+                _mode_spec("LowerConvection", "Start&Setting", ("40", "250", "160")),
+                _mode_spec("LowerBottom", "Start&Setting", ("100", "230", "180")),
+                _mode_spec("LowerAutocook", "Setting", ("NotSupported",) * 3),
             ]
         ),
     },
@@ -255,6 +259,33 @@ _OVEN: Resources = {
         ]
     },
     "/remotectrl/vs/0": {DA + "remoteControlEnabled": "false"},
+    # The lower cavity, which the oven serves as the `/device/1` collection.
+    "/mode/vs/1": {
+        DA + "supportedModes": ["LowerConvection", "LowerBottom", "LowerAutocook", "LowerDrain"],
+        DA + "modes": ["NoOperation"],
+        DA + "options": ["LowerSteamAddLevel_0"],
+        DA + "defaultMode": "LowerConvection",
+    },
+    "/operational/state/vs/1": {
+        DA + "state": "Ready",
+        DA + "operationTime": "00:00:00",
+        DA + "remainingTime": "00:00:00",
+        DA + "progressPercentage": "0",
+    },
+    "/temperatures/vs/1": {
+        DA
+        + "items": [
+            {
+                DA + "id": "0",
+                DA + "description": "Temperature",
+                DA + "desired": "0",
+                DA + "current": "0",
+                DA + "increment": "5",
+                DA + "unit": "Celsius",
+            }
+        ]
+    },
+    "/oven/vs/1": {DA + "state": "Ready", DA + "recipe": "00000000000000"},
 }
 
 _MICROWAVE: Resources = {

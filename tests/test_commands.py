@@ -231,6 +231,66 @@ def test_cook_start_invalid(cook: dict[str, Any], changes: dict[str, Any], messa
         cook_plan(cook, **changes)
 
 
+def test_lower_cook_start() -> None:
+    """Test that a Lower mode starts the lower cavity from its own collection, while the upper one cooks"""
+    assert cook_plan(
+        {"mode": "LowerBottom", "temperature": 200, "minutes": 20},
+        mode_vs_0={DA + "modes": ["UpperConvection"]},
+        operational_state_vs_0={DA + "state": "Run"},
+    ) == [
+        Write(
+            "/device/1",
+            [
+                {"href": "/mode/vs/1", "rep": {DA + "modes": ["LowerBottom"]}},
+                {
+                    "href": "/temperatures/vs/1",
+                    "rep": {DA + "items": [{DA + "id": "0", DA + "desired": "200", DA + "unit": "Celsius"}]},
+                },
+                {"href": "/operational/state/vs/1", "rep": {DA + "operationTime": "00:20:00", DA + "state": "Run"}},
+            ],
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"mode_vs_1": {DA + "modes": ["LowerConvection"]}}, {"operational_state_vs_1": {DA + "state": "Pause"}}],
+)
+def test_lower_cook_start_while_cooking(changes: dict[str, Any]) -> None:
+    """Test that the lower cavity is not started while it cooks"""
+    with pytest.raises(InvalidCommand, match="lower cavity is already cooking"):
+        cook_plan({"mode": "LowerConvection"}, **changes)
+
+
+@pytest.mark.parametrize(
+    ("changes", "operation", "expected"),
+    [
+        (
+            {"operational_state_vs_1": {DA + "state": "Run"}},
+            "stop",
+            [Write("/operational/state/vs/1", {DA + "state": "Ready"})],
+        ),
+        (
+            {"operational_state_vs_1": {DA + "state": "Run"}},
+            "pause",
+            [Write("/operational/state/vs/1", {DA + "state": "Pause"})],
+        ),
+        ({}, "stop", []),
+    ],
+)
+def test_lower_operation(changes: dict[str, Any], operation: str, expected: list[Write]) -> None:
+    """Test that the lower cavity's cook is paused or stopped through its own operational state"""
+    oven = resources("oven", **changes)
+    view = read_view("oven", "10.0.0.1", oven)
+    assert plan_writes(view, oven, ApplianceUpdate(lower_operation=operation)) == expected
+
+
+def test_lower_operation_without_lower_cavity() -> None:
+    """Test that an appliance without a lower cavity refuses its operation"""
+    with pytest.raises(InvalidCommand, match="no lower cavity"):
+        plan("microwave", lower_operation="stop")
+
+
 def test_cook_start_without_mode_spec() -> None:
     """Test that an appliance declaring no startable modes refuses a cook"""
     with pytest.raises(InvalidCommand, match="it offers none"):

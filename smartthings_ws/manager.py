@@ -20,7 +20,7 @@ from smartthings_ws.config import Settings
 from smartthings_ws.connection import ApplianceConnection, Resources, SessionFactory
 from smartthings_ws.errors import ApplianceNotFound, ApplianceUnavailable
 from smartthings_ws.models import ApplianceUpdate, ApplianceView
-from smartthings_ws.state import merge_notification, read_view
+from smartthings_ws.state import merge_notification, read_view, sub_collections
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +176,8 @@ class ApplianceManager:
         tracked.notifications.during_reads.append(notified)
         try:
             resources = await connection.read_resources()
+            for collection in sub_collections(resources):
+                resources |= await self._read_sub_collection(tracked, connection, collection, resources)
         except ApplianceUnavailable as e:
             tracked.missed_reads += 1
             if tracked.missed_reads == 1:
@@ -201,6 +203,21 @@ class ApplianceManager:
             # The read succeeded; the next one reconnects and observes again.
             logger.warning("Observing %s failed: %s", name, e)
         return view
+
+    @staticmethod
+    async def _read_sub_collection(
+        tracked: TrackedAppliance, connection: ApplianceConnection, collection: str, read: Resources
+    ) -> Resources:
+        """Read a further collection of an appliance whose own collection was read.
+
+        If it does not answer, its resources from the last read are kept, so
+        the appliance stays available on the strength of its main read.
+        """
+        try:
+            return await connection.read_resources(collection)
+        except ApplianceUnavailable as e:
+            logger.warning("%s", e)
+            return {href: rep for href, rep in (tracked.resources or {}).items() if href not in read}
 
     def _notified(self, name: str, href: str, rep: dict[str, Any]) -> None:
         """Apply a notification and report what it changed, on the event loop"""

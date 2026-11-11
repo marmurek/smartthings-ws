@@ -9,12 +9,16 @@ from typing import Any, Callable, Optional
 
 from smartthings_ws.connection import DEVICE_COLLECTION, Resources
 from smartthings_ws.errors import InvalidCommand
-from smartthings_ws.models import ApplianceUpdate, ApplianceView, CookStart, Kind, MachineState
+from smartthings_ws.models import ApplianceUpdate, ApplianceView, CookMode, CookStart, Kind, MachineState
 from smartthings_ws.state import (
     AI_LEVEL,
     BUZZER,
     DA,
     DOOR_ALERT,
+    LOWER_COLLECTION,
+    LOWER_MODE,
+    LOWER_OPERATIONAL_STATE,
+    LOWER_TEMPERATURES,
     MODE,
     OPERATIONAL_STATE,
     POWER,
@@ -58,6 +62,15 @@ def _operation(view: ApplianceView, resources: Resources, value: str) -> Optiona
     if view.machine_state is OPERATION_RESULTS[value]:
         return None
     return Write(OPERATIONAL_STATE, {DA + "state": OPERATION_STATES[value]})
+
+
+def _lower_operation(view: ApplianceView, resources: Resources, value: str) -> Optional[Write]:
+    """Start, pause or stop the cook of the lower cavity"""
+    if LOWER_OPERATIONAL_STATE not in resources:
+        raise InvalidCommand(f"this {view.kind.value} has no lower cavity")
+    if view.lower_machine_state is OPERATION_RESULTS[value]:
+        return None
+    return Write(LOWER_OPERATIONAL_STATE, {DA + "state": OPERATION_STATES[value]})
 
 
 def _setpoint(resources: Resources, compartment: str, value: int) -> Write:
@@ -169,7 +182,7 @@ def _dry_time(view: ApplianceView, value: int) -> Write:
 
 
 def _cook(view: ApplianceView, cook: CookStart) -> Write:
-    """Start a cook in one write to the device collection.
+    """Start a cook in one write to the collection of the mode's cavity.
 
     Written one resource at a time from idle, the mode, setpoint and cooking
     time are accepted and then discarded. With Remote Control off the
@@ -182,9 +195,18 @@ def _cook(view: ApplianceView, cook: CookStart) -> Write:
         raise InvalidCommand(f"this appliance cannot start a cook in {cook.mode}; it offers {offered}")
     if view.remote_control is not True:
         raise InvalidCommand("Remote Control is off on the appliance's panel")
-    if view.machine_state is not MachineState.IDLE or view.oven_mode is not None:
-        raise InvalidCommand("the appliance is already cooking")
 
+    lower = mode.mode in (view.lower_supported_modes or [])
+    if lower and (view.lower_machine_state is not MachineState.IDLE or view.lower_mode is not None):
+        raise InvalidCommand("the lower cavity is already cooking")
+    if not lower and (view.machine_state is not MachineState.IDLE or view.oven_mode is not None):
+        cooking = "the upper cavity" if view.lower_supported_modes is not None else "the appliance"
+        raise InvalidCommand(f"{cooking} is already cooking")
+    return _cook_write(mode, cook, lower)
+
+
+def _cook_write(mode: CookMode, cook: CookStart, lower: bool) -> Write:
+    """The write starting a cook within the mode's limits"""
     temperature = mode.temperature_default if cook.temperature is None else cook.temperature
     if not mode.temperature_min <= temperature <= mode.temperature_max:
         raise InvalidCommand(
@@ -197,13 +219,26 @@ def _cook(view: ApplianceView, cook: CookStart) -> Write:
         raise InvalidCommand(f"{mode.mode} cooks {mode.minutes_min}..{mode.minutes_max} minutes, not {duration}")
 
     setpoint = {DA + "id": "0", DA + "desired": str(temperature), DA + "unit": "Celsius"}
+    run = {DA + "operationTime": _duration(duration), DA + "state": "Run"}
+    if lower:
+        # The lower cavity starts from its own collection, without the
+        # `/devices/0` entry; through `/device/0` the start is accepted and
+        # never runs.
+        return Write(
+            LOWER_COLLECTION,
+            [
+                {"href": LOWER_MODE, "rep": {DA + "modes": [mode.mode]}},
+                {"href": LOWER_TEMPERATURES, "rep": {DA + "items": [setpoint]}},
+                {"href": LOWER_OPERATIONAL_STATE, "rep": run},
+            ],
+        )
     return Write(
-        "/" + "/".join(DEVICE_COLLECTION),
+        DEVICE_COLLECTION,
         [
             {"href": "/devices/0"},
             {"href": MODE, "rep": {DA + "modes": [mode.mode]}},
             {"href": TEMPERATURES, "rep": {DA + "items": [setpoint]}},
-            {"href": OPERATIONAL_STATE, "rep": {DA + "operationTime": _duration(duration), DA + "state": "Run"}},
+            {"href": OPERATIONAL_STATE, "rep": run},
         ],
     )
 
@@ -253,6 +288,7 @@ def plan_writes(view: ApplianceView, resources: Resources, update: ApplianceUpda
         ),
         (update.delay_finish_minutes, view.delay_finish_minutes, lambda v: _delay(view, v)),
         (update.operation, None, lambda v: _operation(view, resources, v)),
+        (update.lower_operation, None, lambda v: _lower_operation(view, resources, v)),
         (update.cook, None, lambda v: _cook(view, v)),
     ]
 

@@ -55,6 +55,10 @@ local ELEMENTS <const> = {
   "cook_temperature",
   "cook_time",
   "cook_start",
+  "lower_summary",
+  "lower_progress",
+  "lower_temperature",
+  "lower_stop",
 }
 
 -- Seconds between reads of the state over HTTP until one succeeds after a rebuild.
@@ -78,6 +82,13 @@ local MODES <const> = {
   UpperTopConvection = "Termoobieg z górną grzałką",
   UpperLargeGrill = "Grill",
   UpperAutocook = "Program automatyczny",
+  LowerConvection = "Termoobieg",
+  LowerBottomConvection = "Termoobieg z dolną grzałką",
+  LowerBottom = "Grzałka dolna",
+  LowerAutocook = "Program automatyczny",
+  LowerSteamConvection = "Termoobieg z parą",
+  LowerSteamBottomConvection = "Termoobieg z dolną grzałką i parą",
+  LowerDrain = "Odpompowanie wody",
   Convection = "Termoobieg",
   TopHeatPluseConvection = "Termoobieg z górną grzałką",
   BottomHeatPluseConvection = "Termoobieg z dolną grzałką",
@@ -100,6 +111,9 @@ local MODES <const> = {
   Deodorization = "Odświeżanie",
   SteamClean = "Czyszczenie parą",
 }
+
+-- The cavity a mode of a divided oven runs in, as its name begins.
+local CAVITIES <const> = { Upper = "Góra", Lower = "Dół" }
 
 -- Laundry programme names by course table and code, for the programmes the
 -- washer and dryer offer. The same code names another programme in another
@@ -373,6 +387,10 @@ function CustomDevice:onStop()
   self:send({ operation = "stop" })
 end
 
+function CustomDevice:onLowerStop()
+  self:send({ lower_operation = "stop" })
+end
+
 function CustomDevice:onFridgeTarget(value)
   self:send({ fridge_target = rounded(value) })
 end
@@ -497,6 +515,8 @@ end
 function CustomDevice:onCommand(command, arg)
   if command == "start" or command == "pause" or command == "stop" then
     self:send({ operation = command })
+  elseif command == "lower_pause" or command == "lower_stop" then
+    self:send({ lower_operation = command:sub(7) })
   elseif command == "power_on" or command == "power_off" then
     self:send({ power = command == "power_on" })
   elseif command == "set_fridge_target" and type(arg) == "number" then
@@ -514,7 +534,8 @@ function CustomDevice:onCommand(command, arg)
   elseif command == "set_delay" and type(arg) == "number" then
     self:send({ delay_finish_minutes = rounded(arg) })
   elseif command == "cook" and type(arg) == "table" and type(arg.mode) == "string" then
-    -- e.g. virtual[ID]:call("cook", { mode = "UpperConvection", temperature = 180, minutes = 45 })
+    -- e.g. virtual[ID]:call("cook", { mode = "UpperConvection", temperature = 180, minutes = 45 });
+    -- a Lower mode starts the lower cavity.
     self:send({ cook = { mode = arg.mode, temperature = arg.temperature, minutes = arg.minutes } })
   else
     utils:printf("Unknown command %s", tostring(command))
@@ -575,6 +596,41 @@ local function date(iso)
   return year and string.format("%s.%s.%s", day, month, year) or nil
 end
 
+-- Whether a programme runs or is paused, from a machine state.
+local function busy(state)
+  return state == "running" or state == "paused"
+end
+
+-- Whether the divider splits a dual-cavity oven, or its lower cavity still cooks.
+local function divided(st)
+  return (type(st.lower_supported_modes) == "table" and #st.lower_supported_modes > 0) or busy(st.lower_machine_state)
+end
+
+-- One cavity's running programme; `label` names the cavity of a divided oven.
+local function cavitySummary(label, state, activity, progress, remaining)
+  local paused = state == "paused"
+  local head = label and (paused and (label .. " (wstrzymano)") or label) or (paused and "Wstrzymano" or nil)
+  return joined(
+    head,
+    activity or "Praca",
+    type(progress) == "number" and string.format("%d%%", progress) or nil,
+    remaining and ("zostało " .. duration(remaining)) or nil
+  )
+end
+
+function CustomDevice:lowerSummary(st)
+  if not busy(st.lower_machine_state) then
+    return ""
+  end
+  return cavitySummary(
+    "Dolna komora",
+    st.lower_machine_state,
+    MODES[st.lower_mode],
+    st.lower_progress,
+    st.lower_remaining_minutes
+  )
+end
+
 function CustomDevice:summary(st)
   if not self.ws:isConnected() then
     return "Brak połączenia z smartthings-ws"
@@ -595,14 +651,12 @@ function CustomDevice:summary(st)
   end
 
   local masculine = MASCULINE[st.kind]
-  local remaining = st.remaining_minutes and ("zostało " .. duration(st.remaining_minutes)) or nil
-  local progress = type(st.progress) == "number" and string.format("%d%%", st.progress) or nil
-  local activity = JOBS[st.job] or MODES[st.oven_mode] or "Praca"
-
-  if st.machine_state == "running" then
-    return joined(activity, progress, remaining)
-  elseif st.machine_state == "paused" then
-    return joined("Wstrzymano", activity, progress, remaining)
+  if busy(st.machine_state) then
+    local label = divided(st) and "Górna komora" or nil
+    local activity = JOBS[st.job] or MODES[st.oven_mode]
+    return cavitySummary(label, st.machine_state, activity, st.progress, st.remaining_minutes)
+  elseif busy(st.lower_machine_state) then
+    return "Górna komora wolna"
   elseif st.power == false then
     return masculine and "Wyłączony" or "Wyłączona"
   end
@@ -672,11 +726,11 @@ function CustomDevice:energy(st)
   )
 end
 
-function CustomDevice:temperatureText(st)
-  if type(st.oven_target) ~= "number" or st.oven_target <= 0 then
+local function temperatureText(current, target)
+  if type(target) ~= "number" or target <= 0 then
     return ""
   end
-  return string.format("Temperatura %s, zadana %s", temperature(st.oven_temperature), temperature(st.oven_target))
+  return string.format("Temperatura %s, zadana %s", temperature(current), temperature(target))
 end
 
 function CustomDevice:timing(st)
@@ -883,7 +937,8 @@ local OPTION_LABELS <const> = {
     return tonumber(v) and delayLabel(tonumber(v)) or v
   end,
   cook_mode = function(v)
-    return MODES[v] or v
+    local cavity = CAVITIES[v:sub(1, 5)]
+    return (cavity and (cavity .. ": ") or "") .. (MODES[v] or v)
   end,
   cook_time = function(v)
     return tonumber(v) and duration(tonumber(v)) or v
@@ -925,6 +980,15 @@ function CustomDevice:setRange(name, range)
   end
 end
 
+function CustomDevice:setProgress(name, active, value)
+  local element = self.elements[name]
+  if element == nil then
+    return
+  end
+  put(element, "visibility", active and "visible" or "hidden_adjust")
+  put(element, "value", utils.math:clamp(0, 100, active and type(value) == "number" and value or 0))
+end
+
 function CustomDevice:render()
   local online = self:isOnline()
   local status = online and "online" or "offline"
@@ -937,13 +1001,11 @@ function CustomDevice:render()
 
   local st = self.state or {}
   local running = st.machine_state == "running"
-  local active = running or st.machine_state == "paused"
+  local active = busy(st.machine_state)
 
-  if self.elements.progress ~= nil then
-    local progress = active and type(st.progress) == "number" and st.progress or 0
-    put(self.elements.progress, "visibility", active and "visible" or "hidden_adjust")
-    put(self.elements.progress, "value", utils.math:clamp(0, 100, progress))
-  end
+  local lowerActive = busy(st.lower_machine_state)
+  self:setProgress("progress", active, st.progress)
+  self:setProgress("lower_progress", lowerActive, st.lower_progress)
 
   if self.state ~= nil then
     self:setText("program", self:program(st))
@@ -951,7 +1013,9 @@ function CustomDevice:render()
     self:setText("lock", st.child_lock == true and "Blokada rodzicielska włączona" or "")
     self:setText("energy", self:energy(st))
     self:setText("doors", self:doors(st))
-    self:setText("temperature", self:temperatureText(st))
+    self:setText("temperature", temperatureText(st.oven_temperature, st.oven_target))
+    self:setText("lower_summary", self:lowerSummary(st))
+    self:setText("lower_temperature", lowerActive and temperatureText(st.lower_temperature, st.lower_target) or "")
     self:setText("timing", self:timing(st))
     self:setText("steam", self:steam(st))
     self:setText("maintenance", self:maintenance(st))
@@ -976,6 +1040,7 @@ function CustomDevice:render()
   self:setControl("start", controllable and not running)
   self:setControl("pause", controllable and running)
   self:setControl("stop", online and active)
+  self:setControl("lower_stop", online and lowerActive)
   self:setControl("fridge_target", online, st.fridge_target)
   self:setControl("freezer_target", online, st.freezer_target)
   self:setControl("rapid_cooling", online, st.rapid_cooling)
@@ -1006,11 +1071,14 @@ function CustomDevice:renderCook(st, online)
     pcall(self.addMissingOption, self, "cook_mode", element, mode.mode)
   end
   local choice, spec = self:cookChoice(st)
-  local ready = online
-    and spec ~= nil
-    and st.remote_control == true
-    and st.machine_state == "idle"
-    and st.oven_mode == nil
+  -- A Lower mode starts the lower cavity, which has to be idle instead.
+  local lower = false
+  for _, mode in ipairs(type(st.lower_supported_modes) == "table" and st.lower_supported_modes or {}) do
+    lower = lower or (choice ~= nil and mode == choice.mode)
+  end
+  local idle = lower and (st.lower_machine_state == "idle" and st.lower_mode == nil)
+    or (not lower and st.machine_state == "idle" and st.oven_mode == nil)
+  local ready = online and spec ~= nil and st.remote_control == true and idle
   self:setControl("cook_mode", online and spec ~= nil, choice and choice.mode)
   if spec ~= nil then
     self:setRange("cook_temperature", { spec.temperature_min, spec.temperature_max })

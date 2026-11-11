@@ -186,8 +186,14 @@ def test_oven_remote_start_follows_the_default_mode() -> None:
     elements = {e["name"]: e for e in definition_of(APPLIANCES[3])["elements"]}
 
     mode, slider, minutes = elements["cook_mode"], elements["cook_temperature"], elements["cook_time"]
-    assert [o["value"] for o in mode["options"]] == ["UpperConvection", "UpperLargeGrill"]
-    assert mode["value"] == "UpperConvection" and mode["options"][0]["label"] == "Termoobieg"
+    assert [o["value"] for o in mode["options"]] == [
+        "UpperConvection",
+        "UpperLargeGrill",
+        "LowerConvection",
+        "LowerBottom",
+    ]
+    assert mode["value"] == "UpperConvection"
+    assert [o["label"] for o in mode["options"]][::2] == ["Góra: Termoobieg", "Dół: Termoobieg"]
     assert (slider["minimum"], slider["maximum"], slider["step"], slider["value"]) == (40, 250, 5, 160)
     assert minutes["value"] == "60" and "cook_start" in elements
 
@@ -204,7 +210,14 @@ def test_remote_start_needs_startable_modes() -> None:
     ("appliance", "names"),
     [
         (APPLIANCES[2], {"summary", "progress", "program", "power", "start", "pause", "stop", "remote"}),
-        (APPLIANCES[3], {"summary", "progress", "temperature", "timing", "power", "stop", "remote"}),
+        (
+            APPLIANCES[3],
+            {
+                *("summary", "progress", "temperature", "timing", "power", "stop", "remote"),
+                *("lower_summary", "lower_progress", "lower_temperature", "lower_stop"),
+            },
+        ),
+        (APPLIANCES[0], {"summary", "progress", "temperature", "timing", "power", "stop", "remote"}),
         (APPLIANCES[1], {"summary", "doors"}),
     ],
     ids=lambda v: v.name if isinstance(v, deploy.Appliance) else None,

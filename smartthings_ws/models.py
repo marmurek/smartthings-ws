@@ -120,6 +120,16 @@ class ApplianceView(BaseModel):
     oven_temperature: Optional[int] = None
     oven_target: Optional[int] = None
     elapsed_minutes: Optional[int] = Field(None, description="Cooking time so far")
+    lower_machine_state: Optional[MachineState] = Field(
+        None, description="The lower cavity of a dual-cavity oven; the fields above describe the upper one"
+    )
+    lower_mode: Optional[str] = None
+    lower_supported_modes: Optional[list[str]] = Field(None, description="The modes the lower cavity can run now")
+    lower_temperature: Optional[int] = None
+    lower_target: Optional[int] = None
+    lower_progress: Optional[int] = Field(None, description="%")
+    lower_remaining_minutes: Optional[int] = None
+    lower_elapsed_minutes: Optional[int] = None
     lamp: Optional[bool] = None
     fast_preheat: Optional[bool] = None
     timer_set: Optional[int] = Field(None, description="Kitchen timer setting, in the appliance's own unit")
@@ -143,7 +153,7 @@ class CookStart(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    mode: str = Field(description="One of the cook_modes")
+    mode: str = Field(description="One of the cook_modes; a Lower mode starts the lower cavity")
     temperature: Optional[int] = Field(None, description="°C")
     minutes: Optional[int] = Field(None, description="Cooking time, including the preheat")
 
@@ -156,6 +166,9 @@ class ApplianceUpdate(BaseModel):
     power: Optional[bool] = None
     operation: Optional[Operation] = Field(
         None, description="Start, pause or stop the selected programme of a washer, dryer or oven"
+    )
+    lower_operation: Optional[Operation] = Field(
+        None, description="The same for the lower cavity of a dual-cavity oven"
     )
     fridge_target: Optional[int] = None
     freezer_target: Optional[int] = None

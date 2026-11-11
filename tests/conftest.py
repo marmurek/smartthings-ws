@@ -82,8 +82,9 @@ class FakeSession:
         """Nothing to start"""
 
     def get(self, path_segs: Sequence[str], *, timeout: float = 10.0) -> tuple[int, bytes]:
-        """Answer the collection read"""
-        assert list(path_segs) == ["device", "0"] and timeout > 0
+        """Answer a collection read; `/device/1` holds the resources at index 1"""
+        assert list(path_segs) in (["device", "0"], ["device", "1"]) and timeout > 0
+        lower = path_segs[1] == "1"
         if self.appliance.unreachable:
             raise TimeoutError("read timed out")
         if self.observation.before_read is not None:
@@ -92,7 +93,7 @@ class FakeSession:
             code, reply = self.appliance.get_reply
             return code, b"" if reply is None else cbor2.dumps(reply)
         body: list[dict[str, Any]] = [{"href": None, "rep": {}}]
-        body += [{"href": h, "rep": r} for h, r in self.appliance.resources.items()]
+        body += [{"href": h, "rep": r} for h, r in self.appliance.resources.items() if h.endswith("/vs/1") == lower]
         return CONTENT, cbor2.dumps(body)
 
     def post(self, path_segs: Sequence[str], body_cbor: bytes, *, timeout: float = 8.0) -> tuple[int, bytes]:

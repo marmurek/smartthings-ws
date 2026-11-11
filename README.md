@@ -117,7 +117,8 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `self_check_result`, `self_check_errors` | fridge | Result of the last self check and its error codes |
 | `oven_mode`, `oven_temperature`, `oven_target`, `lamp` | oven, microwave | Cooking mode while cooking, °C, oven light |
 | `supported_modes`, `default_mode` | oven, microwave | Cooking modes the appliance offers |
-| `cook_modes` | oven | The modes a cook can be started in now, each with `temperature_min`, `temperature_max`, `temperature_default`, `temperature_step` (°C) and `minutes_min`, `minutes_max`, `minutes_default`. They come from the oven's `modeSpec` and follow its divider |
+| `cook_modes` | oven | The modes a cook can be started in now, each with `temperature_min`, `temperature_max`, `temperature_default`, `temperature_step` (°C) and `minutes_min`, `minutes_max`, `minutes_default`. They come from the oven's `modeSpec` and follow its divider; a `Lower` mode runs in the lower cavity |
+| `lower_machine_state`, `lower_mode`, `lower_supported_modes`, `lower_temperature`, `lower_target`, `lower_progress`, `lower_remaining_minutes`, `lower_elapsed_minutes` | dual-cavity oven | The lower cavity, read from its own `/device/1` collection; the fields without the prefix describe the upper one. `lower_supported_modes` is what the lower cavity can run now |
 | `elapsed_minutes` | oven, microwave | Cooking time so far |
 | `fast_preheat` | oven, microwave | Fast preheat |
 | `timer_set`, `timer_remaining`, `timer_state` | oven, microwave | Kitchen timer; the unit is unconfirmed, both read 0 while idle |
@@ -132,6 +133,7 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 |---|---|---|
 | `power` | laundry, oven, microwave | `/power/0`, or `/power/vs/0` where that is the only one |
 | `operation`: `start`, `pause`, `stop` | laundry, oven, microwave | `/operational/state/vs/0` |
+| `lower_operation`: `start`, `pause`, `stop` | dual-cavity oven | `/operational/state/vs/1` |
 | `fridge_target`, `freezer_target` | fridge | `/temperatures/vs/0`, within the compartment's range |
 | `rapid_cooling`, `rapid_freezing` | fridge | `/refrigeration/vs/0` |
 | `energy_saving_level`, `door_alarm_volume` | fridge | `/energy/ailevel/vs/0`, `/settings/sound/alert/door/vs/0`, one of the supported values |
@@ -140,7 +142,7 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `water_temperature`, `spin_level`, `rinse_cycles` | washer | `/washer/vs/0`, one of the supported values |
 | `dry_level`, `dry_time_minutes`, `wrinkle_prevent` | dryer | `/washer/vs/0`, one of the supported values |
 | `delay_finish_minutes` | laundry | `/operational/state/vs/0`, 0 to 1440 minutes; `0` clears the delay |
-| `cook`: `{"mode", "temperature", "minutes"}` | oven | One write to `/device/0` carrying the mode, setpoint and cooking time with `Run`. The mode is one of `cook_modes`, the values left out are its defaults, and the time includes the preheat |
+| `cook`: `{"mode", "temperature", "minutes"}` | oven | One write to `/device/0` carrying the mode, setpoint and cooking time with `Run`. The mode is one of `cook_modes`, the values left out are its defaults, and the time includes the preheat. A `Lower` mode goes to `/device/1` with the `/vs/1` resources instead and starts the lower cavity, also while the upper one cooks |
 
 ```bash
 curl -X PATCH http://localhost:8124/appliances/fridge -H 'Content-Type: application/json' -d '{"fridge_target": 4}'
@@ -187,7 +189,7 @@ The answer is `{"type": "applied", ...}`, `{"type": "not_changed", ...}` or `{"t
 
 [`sinum/`](sinum) turns each appliance into a custom device on a Sinum central unit that runs smartthings-ws itself:
 
-- [`appliance.lua`](sinum/appliance.lua) is the script of every device. It receives the state over the WebSocket (`ws://127.0.0.1:8124/ws`), sends commands over it, and reads the state over HTTP once after each rebuild of the interpreter. The state is kept in the script's `utils.c`, so a rebuilt device shows it at once, and shared with other scripts in `utils.C.smartthings_ws.<name>` while the device is online, e.g. `utils.C.smartthings_ws.fridge.door_open`. Laundry programmes are shown by name for the course tables of these appliances. An oven that declares startable modes gets a remote start: mode, temperature, time and Start, enabled while Remote Control is on. A command the appliance refuses shows a toast and puts the control back. Alarms, a waiting firmware update, low detergent, a due drum clean, descaling and the self check errors appear as warnings of the device. Programme settings can be changed only while no programme runs.
+- [`appliance.lua`](sinum/appliance.lua) is the script of every device. It receives the state over the WebSocket (`ws://127.0.0.1:8124/ws`), sends commands over it, and reads the state over HTTP once after each rebuild of the interpreter. The state is kept in the script's `utils.c`, so a rebuilt device shows it at once, and shared with other scripts in `utils.C.smartthings_ws.<name>` while the device is online, e.g. `utils.C.smartthings_ws.fridge.door_open`. Laundry programmes are shown by name for the course tables of these appliances. An oven that declares startable modes gets a remote start: mode, temperature, time and Start, enabled while Remote Control is on and the mode's cavity is idle. A dual-cavity oven shows the lower cavity's programme, progress and temperature below the upper one while it cooks, with its own Stop. A command the appliance refuses shows a toast and puts the control back. Alarms, a waiting firmware update, low detergent, a due drum clean, descaling and the self check errors appear as warnings of the device. Programme settings can be changed only while no programme runs.
 - [`deploy.py`](sinum/deploy.py) builds the elements, the tile and the details dialog for each kind of appliance and creates the devices through the hub's REST API, or updates the ones it created before (recognised by their integration UID `smartthings-ws:<name>`). It reads the appliances from smartthings-ws first: the setting lists offer the values each appliance reports, and an appliance that has not been read is skipped. Run it again when an appliance starts offering other values:
 
 ```bash
@@ -196,7 +198,7 @@ SINUM_TOKEN=<API token> .venv/bin/python -m sinum.deploy --hub http://192.168.50
 
 `--only fridge washer` limits it to some appliances, `--dry-run` reports what it would do. The API does not set the room of a device; assign it in the Sinum app.
 
-Scenes and automations control the devices with commands: `virtual[ID]:call("start")`, `"pause"`, `"stop"`, `"power_on"`, `"power_off"`, `"set_fridge_target"` and `"set_freezer_target"` with a number, `"set_rapid_cooling"`, `"set_rapid_freezing"`, `"set_sound"` and `"set_lamp"` with a boolean, `"set_delay"` with minutes, and `"cook"` with `{ mode = "UpperConvection", temperature = 180, minutes = 45 }`.
+Scenes and automations control the devices with commands: `virtual[ID]:call("start")`, `"pause"`, `"stop"`, `"power_on"`, `"power_off"`, `"set_fridge_target"` and `"set_freezer_target"` with a number, `"set_rapid_cooling"`, `"set_rapid_freezing"`, `"set_sound"` and `"set_lamp"` with a boolean, `"set_delay"` with minutes, `"cook"` with `{ mode = "UpperConvection", temperature = 180, minutes = 45 }` (a `Lower` mode starts the lower cavity), and `"lower_pause"` and `"lower_stop"` for the lower cavity.
 
 The Lua interpreter of the hub has no `select`; [`.stylua.toml`](.stylua.toml) formats the script (`stylua sinum/appliance.lua`), and `luac5.4 -p sinum/appliance.lua` checks its syntax.
 

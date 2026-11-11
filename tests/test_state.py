@@ -5,7 +5,7 @@ from typing import Any, Optional
 import pytest
 
 from smartthings_ws.models import Kind, MachineState
-from smartthings_ws.state import detect_kind, merge_notification, minutes, read_view
+from smartthings_ws.state import detect_kind, merge_notification, minutes, read_view, sub_collections
 from tests.fixtures import DA, resources
 
 
@@ -318,31 +318,76 @@ def test_fridge_door_open(changes: dict[str, Any], expected: Optional[bool]) -> 
 
 
 def test_cook_modes() -> None:
-    """Test that only the modes declared startable and offered by the current cavity layout are reported"""
+    """Test that only the modes declared startable and offered by either cavity are reported"""
     modes = read_view("oven", "10.0.0.1", resources("oven")).cook_modes
     assert modes is not None
-    assert [m.model_dump() for m in modes] == [
-        {
-            "mode": "UpperConvection",
-            "temperature_min": 40,
-            "temperature_max": 250,
-            "temperature_default": 160,
-            "temperature_step": 5,
-            "minutes_min": 1,
-            "minutes_max": 1439,
-            "minutes_default": 60,
+    assert [m.mode for m in modes] == ["UpperConvection", "UpperLargeGrill", "LowerConvection", "LowerBottom"]
+    assert modes[0].model_dump() == {
+        "mode": "UpperConvection",
+        "temperature_min": 40,
+        "temperature_max": 250,
+        "temperature_default": 160,
+        "temperature_step": 5,
+        "minutes_min": 1,
+        "minutes_max": 1439,
+        "minutes_default": 60,
+    }
+
+
+def test_lower_cavity() -> None:
+    """Test that the lower cavity of a dual-cavity oven is read from its own resources"""
+    oven = resources(
+        "oven",
+        mode_vs_1={DA + "modes": ["LowerBottom"]},
+        operational_state_vs_1={
+            DA + "state": "Run",
+            DA + "operationTime": "00:12:00",
+            DA + "remainingTime": "00:06:00",
+            DA + "progressPercentage": "54",
         },
-        {
-            "mode": "UpperLargeGrill",
-            "temperature_min": 40,
-            "temperature_max": 250,
-            "temperature_default": 220,
-            "temperature_step": 5,
-            "minutes_min": 1,
-            "minutes_max": 1439,
-            "minutes_default": 60,
+        temperatures_vs_1={
+            DA + "items": [{DA + "description": "Temperature", DA + "desired": "200", DA + "current": "197"}]
         },
-    ]
+    )
+    view = read_view("oven", "10.0.0.1", oven)
+
+    expected = {
+        "lower_machine_state": MachineState.RUNNING,
+        "lower_mode": "LowerBottom",
+        "lower_supported_modes": ["LowerConvection", "LowerBottom", "LowerAutocook", "LowerDrain"],
+        "lower_temperature": 197,
+        "lower_target": 200,
+        "lower_progress": 54,
+        "lower_remaining_minutes": 6,
+        "lower_elapsed_minutes": 12,
+    }
+    assert view.machine_state is MachineState.IDLE and view.oven_mode is None
+    assert {name: getattr(view, name) for name in expected} == expected
+    assert {n for n in view.model_dump() if n.startswith("lower_")} == set(expected)
+
+
+def test_single_cavity_oven() -> None:
+    """Test that an oven without a lower cavity reports none and offers only its own modes"""
+    oven = {href: rep for href, rep in resources("oven").items() if not href.endswith("/vs/1")}
+    view = read_view("oven", "10.0.0.1", oven)
+
+    assert view.lower_machine_state is None and view.lower_supported_modes is None
+    assert [m.mode for m in view.cook_modes or []] == ["UpperConvection", "UpperLargeGrill"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "changes", "expected"),
+    [
+        ("oven", {}, ["/device/1"]),
+        ("oven", {"mode_vs_0": {DA + "modeSpec": '[{"mode": "Convection", "cavity": "Single"}]'}}, []),
+        ("oven", {"mode_vs_0": {DA + "modeSpec": "not json"}}, []),
+        ("microwave", {}, []),
+        ("washer", {}, []),
+    ],
+)
+def test_sub_collections(kind: str, changes: dict[str, Any], expected: list[str]) -> None:
+    """Test that only an oven declaring a lower cavity has a second collection to read"""
+    assert sub_collections(resources(kind, **changes)) == expected
 
 
 @pytest.mark.parametrize(

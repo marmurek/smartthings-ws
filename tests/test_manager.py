@@ -211,6 +211,46 @@ async def test_read_observes_the_resources(network: FakeNetwork, certificate: Cl
     assert sorted(network.observation("fridge").subscribed) == sorted(network["fridge"].resources)
 
 
+async def test_read_of_the_lower_cavity(network: FakeNetwork, certificate: ClientCertificate) -> None:
+    """Test that a dual-cavity oven's lower cavity is read from its collection and observed"""
+    network["oven"].resources["/operational/state/vs/1"][DA + "state"] = "Run"
+    manager = await started(network, certificate)
+
+    view = await manager.refresh("oven")
+
+    assert view.lower_machine_state is MachineState.RUNNING and view.machine_state is MachineState.IDLE
+    assert "/operational/state/vs/1" in network.observation("oven").subscribed
+
+    network.notify("oven", "/operational/state/vs/1", {DA + "state": "Ready"})
+    await settled(manager, "oven")
+    assert manager.view("oven").lower_machine_state is MachineState.IDLE
+
+
+async def test_lower_cavity_read_fails(
+    network: FakeNetwork, certificate: ClientCertificate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that an oven whose lower cavity does not answer stays available with its last lower state"""
+    network["oven"].resources["/operational/state/vs/1"][DA + "state"] = "Run"
+    manager = await started(network, certificate)
+    await manager.refresh("oven")
+    connection = manager.appliances["oven"].connection
+    assert connection is not None
+    read = connection.read_resources
+
+    async def read_without_lower(collection: str = "/device/0") -> Resources:
+        if collection == "/device/1":
+            raise ApplianceUnavailable("oven answered the read of /device/1 with 4.00")
+        return await read(collection)
+
+    monkeypatch.setattr(connection, "read_resources", read_without_lower)
+    network["oven"].resources["/power/vs/0"][DA + "power"] = "On"
+    for _ in range(UNAVAILABLE_AFTER):
+        view = await manager.refresh("oven")
+
+    assert view.available and view.power is True and view.lower_machine_state is MachineState.RUNNING
+    assert manager.appliances["oven"].missed_reads == 0
+
+
 async def test_notification_is_reported(
     network: FakeNetwork, certificate: ClientCertificate, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -30,8 +30,9 @@ from smartthings_ws.errors import ApplianceUnavailable, CommandRejected
 logger = logging.getLogger(__name__)
 
 # The collection holding every resource of the appliance, returned with their
-# representations by a single blockwise GET.
-DEVICE_COLLECTION = ("device", "0")
+# representations by a single blockwise GET. A dual-cavity oven serves its
+# lower cavity as a second collection, `/device/1`, with resources at `/vs/1`.
+DEVICE_COLLECTION = "/device/0"
 
 # The appliance firmware never forgets a DTLS peer, so reconnecting from a new
 # ephemeral port leaves the old context behind. A fixed source port per
@@ -159,11 +160,14 @@ class ApplianceConnection:
         self._observed: Optional[tuple[Session, float]] = None
         self._lock = asyncio.Lock()
 
-    async def read_resources(self) -> Resources:
-        """Read every resource of the appliance"""
-        code, payload = await self._run(lambda s: s.get(list(DEVICE_COLLECTION), timeout=self._timeout))
+    async def read_resources(self, collection: str = DEVICE_COLLECTION) -> Resources:
+        """Read every resource of a collection, by default the whole appliance"""
+        segments = _segments(collection)
+        code, payload = await self._run(lambda s: s.get(segments, timeout=self._timeout))
         if not is_success(code):
-            raise ApplianceUnavailable(f"{self.appliance.name} answered the state read with {coap_code(code)}")
+            raise ApplianceUnavailable(
+                f"{self.appliance.name} answered the read of {collection} with {coap_code(code)}"
+            )
 
         try:
             return parse_collection(cbor2.loads(payload))

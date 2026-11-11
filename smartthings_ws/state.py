@@ -41,6 +41,13 @@ SELF_CHECK = "/selfcheck/vs/0"
 DOOR_ALERT = "/settings/sound/alert/door/vs/0"
 STATUS_LOCK = "/status/lock/vs/0"
 
+# The lower cavity of a dual-cavity oven: its own collection, holding the
+# same resources at index 1.
+LOWER_COLLECTION = "/device/1"
+LOWER_MODE = "/mode/vs/1"
+LOWER_OPERATIONAL_STATE = "/operational/state/vs/1"
+LOWER_TEMPERATURES = "/temperatures/vs/1"
+
 # The modeSpec control of a mode a remote may start, not only adjust.
 START_CONTROL = "Start&Setting"
 
@@ -132,9 +139,9 @@ def detect_kind(resources: Resources) -> Kind:
     return Kind.UNKNOWN
 
 
-def temperature_item(resources: Resources, description: str) -> Optional[dict[str, Any]]:
-    """One compartment of the vendor temperatures resource, by its description"""
-    items = vendor(resources, TEMPERATURES, "items")
+def temperature_item(resources: Resources, description: str, href: str = TEMPERATURES) -> Optional[dict[str, Any]]:
+    """One compartment of a vendor temperatures resource, by its description"""
+    items = vendor(resources, href, "items")
     if not isinstance(items, list):
         return None
     return next((i for i in items if isinstance(i, dict) and i.get(DA + "description") == description), None)
@@ -183,17 +190,17 @@ def _job(resources: Resources) -> Optional[str]:
     return value if isinstance(value, str) and value != "None" else None
 
 
-def _oven_mode(resources: Resources) -> Optional[str]:
-    """The cooking mode, None while the oven is not cooking"""
-    modes = vendor(resources, MODE, "modes")
+def _oven_mode(resources: Resources, href: str = MODE) -> Optional[str]:
+    """The cooking mode of a cavity, None while it is not cooking"""
+    modes = vendor(resources, href, "modes")
     if not isinstance(modes, list) or not modes or modes[0] == "NoOperation":
         return None
     return str(modes[0])
 
 
-def _machine_state(resources: Resources) -> Optional[MachineState]:
+def _machine_state(resources: Resources, href: str = OPERATIONAL_STATE) -> Optional[MachineState]:
     """Whether a programme is running"""
-    state = vendor(resources, OPERATIONAL_STATE, "state")
+    state = vendor(resources, href, "state")
     return MACHINE_STATES.get(state) if isinstance(state, str) else None
 
 
@@ -437,34 +444,69 @@ def _cook_mode(entry: Any) -> Optional[CookMode]:
     return CookMode(mode=entry["mode"], **limits)
 
 
-def _cook_modes(resources: Resources) -> Optional[list[CookMode]]:
-    """The modes a cook can be started in now.
-
-    modeSpec, a JSON string, declares per mode whether a remote may start it
-    and within which limits. It lists the modes of every cavity layout, so
-    only the ones in supportedModes, which follows the divider, are offered.
-    """
+def _mode_spec(resources: Resources) -> Optional[list[Any]]:
+    """The modeSpec of the oven, a JSON string declaring every mode of every cavity layout"""
     raw = vendor(resources, MODE, "modeSpec")
-    oven = temperature_item(resources, "Temperature")
-    if not isinstance(raw, str) or oven is None or oven.get(DA + "unit") != "Celsius":
+    if not isinstance(raw, str):
         return None
     try:
         spec = json.loads(raw)
     except ValueError:
         return None
-    live = _string_list(vendor(resources, MODE, "supportedModes")) or []
-    modes = [_cook_mode(entry) for entry in spec] if isinstance(spec, list) else []
+    return spec if isinstance(spec, list) else None
+
+
+def sub_collections(resources: Resources) -> list[str]:
+    """The collections to read besides the appliance's own: the lower cavity of a dual-cavity oven"""
+    spec = _mode_spec(resources) or []
+    return [LOWER_COLLECTION] if any(isinstance(e, dict) and e.get("cavity") == "Lower" for e in spec) else []
+
+
+def _supported_modes(resources: Resources, href: str) -> Optional[list[str]]:
+    """The modes a cavity can run now; they follow the divider"""
+    supported = _string_list(vendor(resources, href, "supportedModes"))
+    return None if supported is None else [m for m in supported if m != "NoOperation"]
+
+
+def _cook_modes(resources: Resources) -> Optional[list[CookMode]]:
+    """The modes a cook can be started in now, in either cavity.
+
+    modeSpec declares per mode whether a remote may start it and within which
+    limits. Only the modes a cavity's supportedModes lists are offered.
+    """
+    spec = _mode_spec(resources)
+    oven = temperature_item(resources, "Temperature")
+    if spec is None or oven is None or oven.get(DA + "unit") != "Celsius":
+        return None
+    live = (_supported_modes(resources, MODE) or []) + (_supported_modes(resources, LOWER_MODE) or [])
+    modes = [_cook_mode(entry) for entry in spec]
     return [m for m in modes if m is not None and m.mode in live]
+
+
+def _lower_cavity(resources: Resources) -> dict[str, Any]:
+    """The lower cavity of a dual-cavity oven; every field is null without one"""
+    if LOWER_MODE not in resources:
+        return {}
+    oven = temperature_item(resources, "Temperature", LOWER_TEMPERATURES)
+    return {
+        "lower_machine_state": _machine_state(resources, LOWER_OPERATIONAL_STATE),
+        "lower_mode": _oven_mode(resources, LOWER_MODE),
+        "lower_supported_modes": _supported_modes(resources, LOWER_MODE),
+        "lower_temperature": as_int(oven.get(DA + "current")) if oven else None,
+        "lower_target": as_int(oven.get(DA + "desired")) if oven else None,
+        "lower_progress": as_int(vendor(resources, LOWER_OPERATIONAL_STATE, "progressPercentage")),
+        "lower_remaining_minutes": minutes(vendor(resources, LOWER_OPERATIONAL_STATE, "remainingTime")),
+        "lower_elapsed_minutes": minutes(vendor(resources, LOWER_OPERATIONAL_STATE, "operationTime")),
+    }
 
 
 def _cooking(resources: Resources) -> dict[str, Any]:
     """An oven's or microwave's cooking state, timer and steam system"""
     oven = temperature_item(resources, "Temperature")
-    supported = _string_list(vendor(resources, MODE, "supportedModes"))
     drain = option(resources, MODE, "drainRequired_")
-    return {
+    return _lower_cavity(resources) | {
         "oven_mode": _oven_mode(resources),
-        "supported_modes": None if supported is None else [m for m in supported if m != "NoOperation"],
+        "supported_modes": _supported_modes(resources, MODE),
         "default_mode": text(vendor(resources, MODE, "defaultMode")),
         "cook_modes": _cook_modes(resources),
         "oven_temperature": as_int(oven.get(DA + "current")) if oven else None,

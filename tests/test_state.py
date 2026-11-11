@@ -122,7 +122,7 @@ def test_read_view(kind: str, expected: dict[str, Any]) -> None:
         (
             {"operational_state_vs_0": {DA + "operationTime": "00:12:00", DA + "remainingTime": None}},
             "elapsed_minutes",
-            12,
+            None,
         ),
         ({"operational_state_vs_0": {DA + "operationTime": None}}, "elapsed_minutes", None),
     ],

@@ -432,11 +432,12 @@ def _elapsed_minutes(resources: Resources, href: str) -> Optional[int]:
     """The cooking time so far.
 
     `operationTime` is the cooking time set for the cook, not the time it has
-    run: an oven reports 00:12:00 with 6 minutes left at 51%.
+    run: an oven reports 00:12:00 with 6 minutes left at 51%. A cook started
+    without a timer reports both times as 00:00:00, so it reads 0.
     """
     total = minutes(vendor(resources, href, "operationTime"))
-    left = minutes(vendor(resources, href, "remainingTime")) or 0
-    return None if total is None else max(total - left, 0)
+    left = minutes(vendor(resources, href, "remainingTime"))
+    return None if total is None or left is None else max(total - left, 0)
 
 
 def _cook_mode(entry: Any) -> Optional[CookMode]:

@@ -119,7 +119,7 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `supported_modes`, `default_mode` | oven, microwave | Cooking modes the appliance offers |
 | `cook_modes` | oven | The modes a cook can be started in now, each with `temperature_min`, `temperature_max`, `temperature_default`, `temperature_step` (°C) and `minutes_min`, `minutes_max`, `minutes_default`. They come from the oven's `modeSpec` and follow its divider; a `Lower` mode runs in the lower cavity |
 | `lower_machine_state`, `lower_mode`, `lower_supported_modes`, `lower_temperature`, `lower_target`, `lower_progress`, `lower_remaining_minutes`, `lower_elapsed_minutes` | dual-cavity oven | The lower cavity, read from its own `/device/1` collection; the fields without the prefix describe the upper one. `lower_supported_modes` is what the lower cavity can run now, empty while the divider is out (`/connected/vs/1` is `Off`) |
-| `elapsed_minutes` | oven, microwave | Cooking time so far: the time set for the cook less the time left |
+| `elapsed_minutes` | oven, microwave | Cooking time so far: the time set for the cook less the time left; 0 for a cook started without a timer, which reports no times |
 | `fast_preheat` | oven, microwave | Fast preheat |
 | `timer_set`, `timer_remaining`, `timer_state` | oven, microwave | Kitchen timer; the unit is unconfirmed, both read 0 while idle |
 | `steam_generator_level`, `steam_state`, `water_inlet`, `drain_required` | oven | Steam system: water in the generator (`Empty`), state, water inlet, draining needed |

@@ -187,7 +187,7 @@ def test_minutes(value: Any, expected: Any) -> None:
                 "energy_saved_kwh": 62.69,
                 "delay_finish_minutes": 0,
                 "drum_clean_due_in": 28,
-                "drum_clean_last": "2026-11-03T15:34:56",
+                "drum_clean_last": "2026-11-03T15:34:56Z",
                 "detergent_dose": 2,
                 "softener_dose": 2,
                 "detergent_low": False,
@@ -202,7 +202,7 @@ def test_minutes(value: Any, expected: Any) -> None:
             "dryer",
             {
                 "drum_clean_due_in": 0,
-                "drum_clean_last": "2026-10-05T22:09:39",
+                "drum_clean_last": "2026-10-05T22:09:39Z",
                 "supported_dry_times": [0, 30, 60, 240],
                 "supported_dry_levels": ["Damp", "Less", "Normal", "More"],
                 "drum_light": False,
@@ -457,6 +457,22 @@ def test_course_table(kind: str, table: str) -> None:
 def test_merge_notification(held: dict[str, Any], rep: dict[str, Any], expected: dict[str, Any]) -> None:
     """Test that a notification replaces the keys and option entries it carries and keeps the rest"""
     assert merge_notification(held, rep) == expected
+
+
+@pytest.mark.parametrize(
+    ("log", "expected"),
+    [
+        ("2025-05-10T16:58:53|2026-11-11T16:53:52", "2026-11-11T16:53:52Z"),
+        ("2026-11-11", "2026-11-11"),
+    ],
+)
+def test_drum_clean_last(log: str, expected: str) -> None:
+    """Test that the last logged drum clean is reported in UTC, which the appliance logs it in without a zone"""
+    dryer = resources("dryer")
+    options = dryer["/course/vs/0"][DA + "options"]
+    dryer["/course/vs/0"][DA + "options"] = [o for o in options if not o.startswith("DrumCleanLog_")]
+    dryer["/course/vs/0"][DA + "options"].append("DrumCleanLog_" + log)
+    assert read_view("dryer", "10.0.0.1", dryer).drum_clean_last == expected
 
 
 def test_dry_level_of_a_programme_without_one() -> None:

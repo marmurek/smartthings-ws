@@ -59,6 +59,7 @@ NO_POWER_READING = -500
 MACHINE_STATES = {"Ready": MachineState.IDLE, "Run": MachineState.RUNNING, "Pause": MachineState.PAUSED}
 
 DURATION = re.compile(r"(\d+):(\d{2}):(\d{2})")
+LOCAL_TIME = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
 
 def vendor(resources: Resources, href: str, key: str) -> Any:
@@ -299,9 +300,16 @@ def _drum_clean_due_in(resources: Resources) -> Optional[int]:
 
 
 def _drum_clean_last(resources: Resources) -> Optional[str]:
-    """The time of the last drum clean; a dryer keeps the whole history joined with `|`"""
+    """The time of the last drum clean; a dryer keeps the whole history joined with `|`.
+
+    The appliance logs UTC without a zone: a clean ending at 17:53 in Warsaw
+    (UTC+1) is logged as 16:53. The zone is added to a time of that form.
+    """
     log = option(resources, COURSE, "DrumCleanLog_")
-    return log.rsplit("|", 1)[-1] if log else None
+    if not log:
+        return None
+    last = log.rsplit("|", 1)[-1]
+    return last + "Z" if LOCAL_TIME.fullmatch(last) else last
 
 
 def _water_liters(resources: Resources) -> Optional[float]:

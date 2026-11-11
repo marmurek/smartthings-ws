@@ -84,7 +84,7 @@ class ApplianceView(BaseModel):
     softener_low: Optional[bool] = Field(None, description="The automatic softener tank runs low")
     water_liters: Optional[float] = Field(None, description="Lifetime water consumption, l")
     drum_clean_due_in: Optional[int] = Field(None, description="Cycles left until the recommended drum clean")
-    drum_clean_last: Optional[str] = Field(None, description="Time of the last drum clean, ISO 8601 without zone")
+    drum_clean_last: Optional[str] = Field(None, description="Time of the last drum clean, ISO 8601 in UTC")
     dry_level: Optional[str] = None
     supported_dry_levels: Optional[list[str]] = None
     dry_time_minutes: Optional[int] = Field(None, description="Drying time of a timed programme; 0 dries to a level")

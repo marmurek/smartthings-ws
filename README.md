@@ -101,7 +101,7 @@ Fields an appliance does not have are `null`. `available` turns `false` after th
 | `progress`, `remaining_minutes` | laundry, oven, microwave | Progress in %, time left. While idle a washer reports the selected programme's estimate. The microwave reports no progress |
 | `course`, `course_table` | laundry | Programme code, e.g. `1C`, and the table it belongs to, e.g. `Table_02`; the same code is another programme in another table |
 | `delay_finish_minutes` | laundry | The programme ends this long after it is started, `0` without a delay |
-| `drum_clean_due_in`, `drum_clean_last` | laundry | Cycles left until the recommended drum clean, time of the last one; the dryer keeps the same counters for its drum clean |
+| `drum_clean_due_in`, `drum_clean_last` | laundry | Cycles left until the recommended drum clean, time of the last one in UTC (`2026-11-11T16:53:52Z`); the dryer keeps the same counters for its drum clean |
 | `water_temperature`, `spin_level`, `rinse_cycles` | washer | Programme settings, with the values offered in `supported_water_temperatures`, `supported_spin_levels`, `supported_rinse_cycles` |
 | `detergent_dose`, `softener_dose`, `detergent_low`, `softener_low` | washer | Automatic dosing level, and the tank running low |
 | `water_liters` | washer | Lifetime water consumption |

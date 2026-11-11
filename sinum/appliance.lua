@@ -587,13 +587,32 @@ local function capitalized(text)
   return (text:gsub("^%l", string.upper))
 end
 
--- "2026-11-03T15:34:56" as "03.11.2026".
+-- Days since 1970-01-01 of a date of the Gregorian calendar.
+local function daysFromCivil(year, month, day)
+  year = month <= 2 and year - 1 or year
+  local era = year // 400
+  local yearOfEra = year - era * 400
+  local dayOfYear = (153 * (month > 2 and month - 3 or month + 9) + 2) // 5 + day - 1
+  return era * 146097 + yearOfEra * 365 + yearOfEra // 4 - yearOfEra // 100 + dayOfYear - 719468
+end
+
+-- "2026-11-11T23:30:00Z" as the hub's local date, "12.11.2026". The hub's
+-- current offset is applied, so a time from the other side of a DST change
+-- may land an hour off.
 local function date(iso)
   if type(iso) ~= "string" then
     return nil
   end
-  local year, month, day = iso:match("^(%d+)-(%d+)-(%d+)")
-  return year and string.format("%s.%s.%s", day, month, year) or nil
+  local year, month, day, hour, minute, second = iso:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)Z$")
+  if year == nil then
+    year, month, day = iso:match("^(%d+)-(%d+)-(%d+)")
+    return year and string.format("%s.%s.%s", day, month, year) or nil
+  end
+  local utc = daysFromCivil(tonumber(year), tonumber(month), tonumber(day)) * 86400
+    + tonumber(hour) * 3600
+    + tonumber(minute) * 60
+    + tonumber(second)
+  return os.date("!%d.%m.%Y", utc + dateTime:getTimeZoneOffset())
 end
 
 -- Whether a programme runs or is paused, from a machine state.

@@ -1061,14 +1061,40 @@ function CustomDevice:render()
   self:share(online)
 end
 
+-- The options follow the modes the oven offers now, which change with its
+-- divider. A combo box drops options only by clearing them all, so the list
+-- is rebuilt when it differs; while no modes are known it is kept.
+function CustomDevice:setCookModes(element, modes)
+  if type(modes) ~= "table" or #modes == 0 then
+    return
+  end
+  local shown = {}
+  local options = element:getValue("available_options")
+  for _, option in ipairs(type(options) == "table" and options or {}) do
+    shown[#shown + 1] = type(option) == "table" and option.value or ""
+  end
+  local wanted = {}
+  for _, mode in ipairs(modes) do
+    wanted[#wanted + 1] = mode.mode
+  end
+  if table.concat(shown, ",") == table.concat(wanted, ",") then
+    return
+  end
+  element:call("clear_options", {}, true)
+  for _, mode in ipairs(wanted) do
+    element:call("add_option", { OPTION_LABELS.cook_mode(mode), mode }, true)
+  end
+end
+
 function CustomDevice:renderCook(st, online)
   local element = self.elements.cook_mode
   if element == nil then
     return
   end
-  -- The modes on offer follow the oven's divider.
-  for _, mode in ipairs(type(st.cook_modes) == "table" and st.cook_modes or {}) do
-    pcall(self.addMissingOption, self, "cook_mode", element, mode.mode)
+  -- An error here would recur on every report and get the device banned.
+  local ok, err = pcall(self.setCookModes, self, element, st.cook_modes)
+  if not ok then
+    utils:printf("Cannot list the cook modes: %s", tostring(err))
   end
   local choice, spec = self:cookChoice(st)
   -- A Lower mode starts the lower cavity, which has to be idle instead.

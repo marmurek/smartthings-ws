@@ -38,7 +38,7 @@ def test_root_and_health(client: TestClient) -> None:
     """Test that the root lists the appliance names and the health probe answers"""
     assert client.get("/").json() == {
         "app": "SmartThings Local API",
-        "version": "0.4.0",
+        "version": "0.4.1",
         "appliances": ["microwave", "fridge", "washer", "oven", "dryer"],
     }
     assert client.get("/health").json() == {"status": "ok"}

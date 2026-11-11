@@ -626,8 +626,7 @@ end
 
 function CustomDevice:program(st)
   if st.kind == "washer" then
-    local water = WATER_TEMPERATURES[st.water_temperature]
-      or (st.water_temperature and st.water_temperature ~= "None" and st.water_temperature .. "°C")
+    local water = WATER_TEMPERATURES[st.water_temperature] or (st.water_temperature and st.water_temperature .. "°C")
     local spin = SPIN_LEVELS[st.spin_level] or (st.spin_level and st.spin_level .. " obr/min")
     local rinses = type(st.rinse_cycles) == "number" and string.format("płukania: %d", st.rinse_cycles) or nil
     return joined(self:courseName(st), water, spin, rinses)

@@ -261,6 +261,8 @@ def test_alarms(items: Any, expected: Any) -> None:
         ({"course_vs_0": {DA + "options": ["DetergentAlarm_Notice_0"]}}, "detergent_low", True),
         ({"course_vs_0": {DA + "options": ["WashingTimes_x", "DrumCleanProposal_40"]}}, "drum_clean_due_in", None),
         ({"washer_vs_0": {DA + "waterTemperature": 40}}, "water_temperature", None),
+        ({"washer_vs_0": {DA + "waterTemperature": "None"}}, "water_temperature", None),
+        ({"washer_vs_0": {DA + "spinLevel": "None"}}, "spin_level", None),
         ({"washer_vs_0": {DA + "supportedRinseCycles": "2"}}, "supported_rinse_cycles", None),
         ({"operational_state_vs_0": {DA + "delayEndTime": "05:00:00"}}, "delay_finish_minutes", 300),
     ],
@@ -384,3 +386,8 @@ def test_course_table(kind: str, table: str) -> None:
 def test_merge_notification(held: dict[str, Any], rep: dict[str, Any], expected: dict[str, Any]) -> None:
     """Test that a notification replaces the keys and option entries it carries and keeps the rest"""
     assert merge_notification(held, rep) == expected
+
+
+def test_dry_level_of_a_programme_without_one() -> None:
+    """Test that a dryer programme without a dry level reports none rather than the text None"""
+    assert read_view("dryer", "10.0.0.1", resources("dryer", washer_vs_0={DA + "dryLevel": "None"})).dry_level is None

@@ -237,6 +237,11 @@ def _string_list(value: Any) -> Optional[list[str]]:
     return [str(v) for v in value] if isinstance(value, list) else None
 
 
+def _setting(value: Any) -> Optional[str]:
+    """A laundry programme setting; `None` is what a programme without that setting reports"""
+    return None if value == "None" else text(value)
+
+
 def _choices(value: Any) -> Optional[list[str]]:
     """The values a setting offers, without the `None` placeholder the laundry lists start with"""
     values = _string_list(value)
@@ -339,8 +344,8 @@ def _laundry(resources: Resources) -> dict[str, Any]:
 def _washer(resources: Resources) -> dict[str, Any]:
     """A washer's programme settings, detergent dosing and water use"""
     return {
-        "water_temperature": text(vendor(resources, WASHER, "waterTemperature")),
-        "spin_level": text(vendor(resources, WASHER, "spinLevel")),
+        "water_temperature": _setting(vendor(resources, WASHER, "waterTemperature")),
+        "spin_level": _setting(vendor(resources, WASHER, "spinLevel")),
         "rinse_cycles": as_int(vendor(resources, WASHER, "rinseCycles")),
         "supported_water_temperatures": _choices(vendor(resources, WASHER, "supportedWaterTemperature")),
         "supported_spin_levels": _choices(vendor(resources, WASHER, "supportedSpinLevel")),
@@ -362,7 +367,7 @@ def _dryer(resources: Resources) -> dict[str, Any]:
     """A dryer's programme settings"""
     supported_times = vendor(resources, WASHER, "supportedDryTime")
     return {
-        "dry_level": text(vendor(resources, WASHER, "dryLevel")),
+        "dry_level": _setting(vendor(resources, WASHER, "dryLevel")),
         "supported_dry_levels": _choices(vendor(resources, WASHER, "supportedDryLevel")),
         "dry_time_minutes": minutes(vendor(resources, WASHER, "dryTime")),
         "supported_dry_times": (
